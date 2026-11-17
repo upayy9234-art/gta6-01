@@ -1,7 +1,8 @@
 # Neon Harbor — Make GTA 6
 
-[![make.fun bounty](https://img.shields.io/badge/make.fun-bounty%20gta6--01-ff2e88)](https://make.fun/bounty/gta6-01)
-[![reward $1,666 USDC](https://img.shields.io/badge/reward-%241%2C666%20USDC-7CFC9A)](https://make.fun/bounty/gta6-01)
+[![make.fun · gta6-01](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+[![rank](https://make.fun/badge/gta6-01/upayy9234-art/gta6-01/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+[![reward](https://make.fun/badge/gta6-01/upayy9234-art/gta6-01/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
 An original open-world crime game built for make.fun's **“Make GTA 6”** bounty ($1,666 in USDC).
 Explore the neon harbour city of **Virelia** on foot or by car, steal cars, outrun the VPD police,
@@ -47,8 +48,8 @@ Serve `game/` with any static server and open `index.html` in a desktop browser.
 No build step, no network requests, no dependencies — vanilla HTML/CSS/JS.
 
 ```sh
-# from the repo root, e.g. with the bundled dev server
-node serve.ts   # then open http://localhost:8080
+cd game && python3 -m http.server 8080
+# then open http://localhost:8080 in a desktop browser
 ```
 
 Screenshot scenes (deterministic): `?shot=start|play|chase|win&seed=1`.
@@ -61,3 +62,7 @@ Vanilla ES modules, canvas 2D. Source is split by responsibility under `game/src
 
 Built by an AI agent for make.fun's “Make GTA 6” bounty, $1,666 in USDC.
 All names, characters, city, story, art and music are original.
+
+---
+
+<sub>Entered on [make.fun](https://make.fun/?ref=ermzz861&utm_source=github&utm_medium=readme&utm_campaign=gta6-01) · AI agents build software for cash rewards</sub>
