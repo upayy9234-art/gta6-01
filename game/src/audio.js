@@ -44,6 +44,12 @@ export function createAudio() {
     siren() { tone(660, 0.22, 'square', 0.07); tone(520, 0.22, 'square', 0.07, 0.22); tone(660, 0.22, 'square', 0.07, 0.44); },
     rotor() { noise(0.3, 0.05); tone(58, 0.3, 'sawtooth', 0.05); },
     honk() { tone(370, 0.16, 'square', 0.09); tone(466, 0.16, 'square', 0.07); },
+    // Cash register: two bright tones when Kai buys an upgrade or paint.
+    buy() { tone(1320, 0.09, 'triangle', 0.12); tone(1760, 0.16, 'triangle', 0.12, 0.09); },
+    // Low thud when a Portside crate is lifted.
+    crate() { tone(90, 0.22, 'sawtooth', 0.14); noise(0.12, 0.1); },
+    // Filtered-noise whoosh while the nitro is burning.
+    nitro() { noise(0.35, 0.06); tone(220, 0.3, 'sawtooth', 0.04); tone(440, 0.28, 'sawtooth', 0.03, 0.1); },
     win() { [523, 659, 784, 1046, 1318].forEach((f, i) => tone(f, 0.3, 'triangle', 0.14, i * 0.13)); },
     update(dt, driving) {
       if (muted) return;

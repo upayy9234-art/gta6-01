@@ -8,7 +8,8 @@ let carId = 0;
 export function makeCar(x, y, angle, model, opts = {}) {
   return {
     id: carId += 1, x, y, angle, speed: 0, model, color: model.color,
-    health: CAR.health, npc: !!opts.npc, police: !!opts.police, target: null,
+    health: CAR.health, maxHealth: CAR.health, speedMul: 1, nitroBoost: false,
+    npc: !!opts.npc, police: !!opts.police, target: null,
     vx: 0, vy: 0, stuck: 0, honk: 0, driver: opts.driver ?? true,
   };
 }
@@ -45,7 +46,10 @@ export function updateCarPhysics(car, input, dt, state) {
   car.angle += steering * CAR.turnRate * dt * Math.min(1, Math.abs(car.speed) / 120) * dir;
   car.speed += throttle * (throttle > 0 ? CAR.accel : CAR.brake) * car.model.speed * dt;
   car.speed -= car.speed * CAR.drag * dt;
-  car.speed = Math.max(-CAR.reverse, Math.min(CAR.maxSpeed * car.model.speed, car.speed));
+  // Garage engine upgrades raise the cap; fitted nitro leaves 320 of
+  // headroom while Shift is held so the boost is not clamped away.
+  const nitroHeadroom = (car.nitroBoost && input.run()) ? 320 : 0;
+  car.speed = Math.max(-CAR.reverse, Math.min(CAR.maxSpeed * car.model.speed * (car.speedMul ?? 1) + nitroHeadroom, car.speed));
   const nx = car.x + Math.cos(car.angle) * car.speed * dt;
   const ny = car.y + Math.sin(car.angle) * car.speed * dt;
   const hit = crashCheck(state, nx, ny);

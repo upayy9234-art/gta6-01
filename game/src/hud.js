@@ -2,6 +2,10 @@
 // banners. All drawn on the same canvas, top-down, neon style.
 import { PALETTE, VIEW, WORLD, MISSIONS } from './config.js';
 import { missionProgressText, missionWaypoint } from './missions.js';
+import { clockText } from './daynight.js';
+import { weaponHudText } from './weapons.js';
+import { garageSummary } from './garage.js';
+import { nearestPoliceCar } from './police.js';
 
 export function drawHUD(ctx, state) {
   const p = state.player;
@@ -20,15 +24,32 @@ export function drawHUD(ctx, state) {
   ctx.fillStyle = PALETTE.text; ctx.font = 'bold 12px system-ui, sans-serif';
   ctx.fillText('HP ' + Math.max(0, Math.ceil(p.health)), 210, 72);
 
-  // Wanted stars top-right.
+  // Weapon panel under the cash panel: current gun + ammo, owned guns, garage.
+  const weapon = weaponHudText(state);
   ctx.fillStyle = PALETTE.panel;
-  roundRect(ctx, VIEW.width - 232, 12, 220, 48, 10); ctx.fill();
+  roundRect(ctx, 12, 112, 250, 78, 10); ctx.fill();
+  ctx.fillStyle = '#9ae8ff'; ctx.font = 'bold 14px system-ui, sans-serif';
+  ctx.fillText('🔫 ' + weapon.current, 24, 120);
+  ctx.fillStyle = PALETTE.text; ctx.font = '12px system-ui, sans-serif';
+  ctx.fillText(weapon.owned, 24, 142);
+  ctx.fillStyle = PALETTE.muted; ctx.font = '12px system-ui, sans-serif';
+  ctx.fillText('🚗 ' + garageSummary(state), 24, 164);
+
+  // Wanted stars top-right, with the nearest VPD car distance.
+  ctx.fillStyle = PALETTE.panel;
+  roundRect(ctx, VIEW.width - 232, 12, 220, 66, 10); ctx.fill();
   ctx.font = 'bold 13px system-ui, sans-serif'; ctx.fillStyle = PALETTE.muted;
   ctx.fillText('WANTED', VIEW.width - 220, 18);
   for (let i = 0; i < 5; i += 1) {
     ctx.fillStyle = i < p.wanted ? '#ffd23d' : '#3a3f66';
     drawStar(ctx, VIEW.width - 150 + i * 26, 36, 11);
   }
+  const nearestVpd = nearestPoliceCar(state);
+  ctx.fillStyle = PALETTE.text; ctx.font = '12px system-ui, sans-serif';
+  ctx.fillText(
+    nearestVpd ? 'NEAREST VPD ' + Math.round(Math.hypot(nearestVpd.x - p.x, nearestVpd.y - p.y)) + 'm' : 'VPD CLEAR',
+    VIEW.width - 220, 56,
+  );
 
   // Mission objective bar (top centre).
   const mission = MISSIONS[state.missions.index];
@@ -55,15 +76,14 @@ export function drawHUD(ctx, state) {
 
   // Controls hint bottom-left.
   ctx.fillStyle = 'rgba(8,10,24,0.6)';
-  roundRect(ctx, 12, VIEW.height - 58, 330, 46, 8); ctx.fill();
+  roundRect(ctx, 12, VIEW.height - 58, 380, 46, 8); ctx.fill();
   ctx.fillStyle = PALETTE.muted; ctx.font = '12px system-ui, sans-serif'; ctx.textAlign = 'left';
-  ctx.fillText(p.inCar ? 'WASD drive · E exit car · Space handbrake · H honk' : 'WASD move · Mouse aim · Click/Space shoot · E enter car', 22, VIEW.height - 46);
-  ctx.fillText('Shift run · Esc pause · M sound · Cash: steal cars, finish missions', 22, VIEW.height - 28);
+  ctx.fillText(p.inCar ? 'WASD drive · E exit car · Space handbrake · H honk · G garage' : 'WASD move · Mouse aim · Click/Space shoot · E enter car · G garage', 22, VIEW.height - 46);
+  ctx.fillText('Shift run / nitro · 1–4 switch weapon · Esc pause · M sound · Cash: steal cars, finish missions', 22, VIEW.height - 28);
 
   // Clock + day/night label, left of the minimap so it never overlaps it.
   ctx.fillStyle = PALETTE.text; ctx.font = 'bold 13px system-ui, sans-serif'; ctx.textAlign = 'right';
-  const hours = Math.floor(state.timeOfDay / 60); const mins = Math.floor(state.timeOfDay % 60);
-  ctx.fillText(String(hours).padStart(2, '0') + ':' + String(mins).padStart(2, '0') + '  ' + (state.timeOfDay < 360 || state.timeOfDay > 1080 ? 'NIGHT' : 'DAY'), VIEW.width - 200, VIEW.height - 188);
+  ctx.fillText(clockText(state), VIEW.width - 200, VIEW.height - 188);
 
   drawMinimap(ctx, state);
   ctx.restore();

@@ -54,6 +54,9 @@ export function buildCity(random) {
       const x0 = xs[i] + WORLD.road / 2 + 14, y0 = ys[j] + WORLD.road / 2 + 14;
       const x1 = xs[i + 1] - WORLD.road / 2 - 14, y1 = ys[j + 1] - WORLD.road / 2 - 14;
       if (x0 > 2900) continue; // river side stays open waterfront
+      // South-east blocks belong to the Portside docks (district.js) — no
+      // ordinary buildings here, or they would overlap the container yard.
+      if (x0 > 2100 && y0 > 1700) continue;
       // Central block becomes Harbor Park.
       if (i === 3 && j === 2) { parks.push({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }); continue; }
       // North-west block becomes the Neon Strip casino district.

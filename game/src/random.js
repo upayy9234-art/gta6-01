@@ -12,6 +12,12 @@ export function createRandom(seed) {
     range(min, max) { return min + this.next() * (max - min); },
     int(min, max) { return Math.floor(this.range(min, max + 1)); },
     pick(list) { return list[Math.floor(this.next() * list.length)]; },
+    // n distinct entries, no repeats — a shuffled prefix of a copy.
+    sample(list, n) {
+      const copy = list.slice();
+      this.shuffle(copy);
+      return copy.slice(0, Math.max(0, Math.min(n, copy.length)));
+    },
     bool(prob) { return this.next() < prob; },
     shuffle(list) {
       for (let i = list.length - 1; i > 0; i -= 1) {

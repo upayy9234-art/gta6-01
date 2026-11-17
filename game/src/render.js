@@ -4,6 +4,11 @@
 import { PALETTE, VIEW, WORLD } from './config.js';
 import { drawHUD, roundRect } from './hud.js';
 import { missionWaypoint } from './missions.js';
+import { drawPortside } from './district.js';
+import { drawStars, drawMoon, drawSun, skyState } from './daynight.js';
+import { drawWeaponPickups } from './weapons.js';
+import { drawGarage, GARAGE_SPOT } from './garage.js';
+import { heliSpotlightAlpha } from './heli.js';
 
 export const SCREEN_TITLE = 'title';
 export const SCREEN_PLAY = 'play';
@@ -35,14 +40,23 @@ export function createRenderer(canvas) {
       drawWorld(ctx, state);
       drawEntities(ctx, state);
       ctx.restore();
-      // Night tint.
-      const night = state.timeOfDay < 360 || state.timeOfDay > 1080;
-      if (night) { ctx.fillStyle = 'rgba(10,12,40,0.22)'; ctx.fillRect(0, 0, VIEW.width, VIEW.height); }
+      // Day/night sky: a tint that follows the clock, then stars, moon or sun
+      // in screen space so the sky always reads, day or night.
+      const sky = skyState(state.timeOfDay);
+      if (sky.nightAlpha > 0.005) {
+        ctx.fillStyle = 'rgba(10,12,40,' + sky.nightAlpha.toFixed(3) + ')';
+        ctx.fillRect(0, 0, VIEW.width, VIEW.height);
+      }
+      drawStars(ctx, state, VIEW.width, VIEW.height);
+      drawMoon(ctx, state, VIEW.width);
+      drawSun(ctx, state, VIEW.width);
       if (screen === SCREEN_PLAY || screen === SCREEN_PAUSED) drawHUD(ctx, state);
       if (screen === SCREEN_TITLE) drawTitle(ctx, state, best);
       if (screen === SCREEN_PAUSED) drawPause(ctx);
       if (screen === SCREEN_OVER) drawGameOver(ctx, state, best);
       if (screen === SCREEN_WIN) drawWin(ctx, state);
+      // The garage menu draws last, over everything.
+      if (state.garage && state.garage.open) drawGarage(ctx, state);
     },
   };
 }
@@ -105,13 +119,23 @@ function drawWorld(ctx, state) {
     }
     ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.lineWidth = 2; ctx.strokeRect(b.x, b.y, b.w, b.h);
   }
-  // Street lamps glow.
+  // Street lamps glow — wider and brighter at night, per the day/night sky.
+  const sky = skyState(state.timeOfDay);
   for (const lamp of state.city.lamps) {
     if (Math.abs(lamp.x - cam.x) > vw / 2 || Math.abs(lamp.y - cam.y) > vh / 2) continue;
-    ctx.fillStyle = 'rgba(255,214,106,0.16)';
-    ctx.beginPath(); ctx.arc(lamp.x, lamp.y, 26, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(255,214,106,' + sky.lampGlow.toFixed(3) + ')';
+    ctx.beginPath(); ctx.arc(lamp.x, lamp.y, sky.lampRadius, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#ffd76a'; ctx.beginPath(); ctx.arc(lamp.x, lamp.y, 4, 0, Math.PI * 2); ctx.fill();
   }
+  // Virelia Motors garage marker on the north road.
+  ctx.strokeStyle = '#ffc53d'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(GARAGE_SPOT.x, GARAGE_SPOT.y, 40 + Math.sin(state.time * 3) * 4, 0, Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = '#ffc53d'; ctx.font = 'bold 14px system-ui, sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('🔧 GARAGE', GARAGE_SPOT.x, GARAGE_SPOT.y - 48);
+  ctx.fillStyle = '#9aa3c7'; ctx.font = '12px system-ui, sans-serif';
+  ctx.fillText('press G', GARAGE_SPOT.x, GARAGE_SPOT.y + 56);
+  // Portside docks: quay, cranes, boats and mission crates.
+  drawPortside(ctx, state);
   // Waypoint marker on the ground.
   const wp = missionWaypoint(state);
   if (wp && !state.missions.done) {
@@ -151,6 +175,8 @@ function drawCar(ctx, car) {
 }
 
 function drawEntities(ctx, state) {
+  // Weapon pickups first, so their rings sit under cars and the player.
+  drawWeaponPickups(ctx, state);
   // Pedestrians.
   for (const ped of state.peds) {
     ctx.save(); ctx.translate(ped.x, ped.y);
@@ -163,9 +189,9 @@ function drawEntities(ctx, state) {
   // Cars (NPC first, player car last so it draws on top).
   for (const car of state.cars) if (car !== state.player.inCar) drawCar(ctx, car);
   if (state.player.inCar) drawCar(ctx, state.player.inCar);
-  // Bullets.
+  // Bullets — police tracers stay red, Kai's bullets keep their gun's colour.
   for (const b of state.bullets) {
-    ctx.fillStyle = b.fromPolice ? '#ff6b6b' : '#ffe27a';
+    ctx.fillStyle = b.fromPolice ? '#ff6b6b' : (b.color ?? '#ffe27a');
     ctx.beginPath(); ctx.arc(b.x, b.y, 4, 0, Math.PI * 2); ctx.fill();
   }
   // Particles.
@@ -195,7 +221,8 @@ function drawEntities(ctx, state) {
     const px = state.player.inCar ? state.player.inCar.x : state.player.x;
     const py = state.player.inCar ? state.player.inCar.y : state.player.y;
     ctx.save();
-    ctx.fillStyle = 'rgba(255,240,180,0.13)';
+    // Heli spotlight cone: brighter at night, faint by day.
+    ctx.fillStyle = 'rgba(255,240,180,' + heliSpotlightAlpha(state).toFixed(3) + ')';
     ctx.beginPath(); ctx.moveTo(hx, hy);
     ctx.lineTo(px - 40, py - 40); ctx.lineTo(px + 40, py + 40); ctx.closePath(); ctx.fill();
     ctx.fillStyle = 'rgba(0,0,0,0.35)';
@@ -239,10 +266,10 @@ function drawTitle(ctx, state, best) {
   ctx.fillText('AN OPEN-WORLD CRIME STORY  ·  VIRELIA', VIEW.width / 2, 212);
   ctx.fillStyle = PALETTE.text; ctx.font = '16px system-ui, sans-serif';
   ctx.fillText('Kai Mercer. One last job for fixer Mara Voss. Steal cars, outrun the VPD,', VIEW.width / 2, 268);
-  ctx.fillText('finish four missions, rob the Neon Strip casino, and take the Harbor Vault score.', VIEW.width / 2, 292);
+  ctx.fillText('finish six missions, rob the Neon Strip casino, raid the Portside docks, and take the Harbor Vault score.', VIEW.width / 2, 292);
   ctx.fillStyle = PALETTE.muted; ctx.font = '15px system-ui, sans-serif';
   ctx.fillText('WASD move / drive  ·  Mouse aim  ·  Click or Space shoot  ·  E enter / exit car', VIEW.width / 2, 340);
-  ctx.fillText('Shift run  ·  H honk  ·  Esc pause  ·  M sound  ·  Progress saves automatically', VIEW.width / 2, 364);
+  ctx.fillText('Shift run / nitro  ·  H honk  ·  G garage  ·  1–4 switch weapon  ·  Esc pause  ·  M sound', VIEW.width / 2, 364);
   const pulse = 0.7 + Math.sin(state.time * 3) * 0.3;
   ctx.globalAlpha = pulse;
   ctx.fillStyle = PALETTE.neonGold; ctx.font = 'bold 24px system-ui, sans-serif';
@@ -278,10 +305,10 @@ function drawGameOver(ctx, state, best) {
 function drawWin(ctx, state) {
   ctx.fillStyle = 'rgba(6,20,12,0.8)'; ctx.fillRect(0, 0, VIEW.width, VIEW.height);
   ctx.fillStyle = PALETTE.neonGold; ctx.textAlign = 'center'; ctx.font = 'bold 60px system-ui, sans-serif';
-  ctx.fillText('THE SCORE IS YOURS', VIEW.width / 2, 280);
+  ctx.fillText('SIX JOBS DONE', VIEW.width / 2, 280);
   ctx.fillStyle = PALETTE.text; ctx.font = '18px system-ui, sans-serif';
-  ctx.fillText('Kai Mercer walks away from the Harbor Vault and the Neon Strip with the whole score.', VIEW.width / 2, 330);
-  ctx.fillText('Four jobs done. Mara Voss smiles. Virelia is yours now.', VIEW.width / 2, 358);
+  ctx.fillText('Kai Mercer walks away from the Harbor Vault, the Neon Strip and the Portside docks with the whole score.', VIEW.width / 2, 330);
+  ctx.fillText('Six jobs done. Mara Voss smiles. Virelia is yours now.', VIEW.width / 2, 358);
   ctx.fillText('Final score ' + state.score.toLocaleString('en-US') + '   ·   Cash $' + state.player.money.toLocaleString('en-US'), VIEW.width / 2, 400);
   ctx.fillStyle = PALETTE.neonCyan; ctx.font = 'bold 20px system-ui, sans-serif';
   ctx.fillText('CLICK OR PRESS SPACE TO PLAY AGAIN', VIEW.width / 2, 470);

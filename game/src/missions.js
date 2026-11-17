@@ -1,7 +1,10 @@
-// Missions and story: four sequential jobs for fixer Mara Voss, each with a
+// Missions and story: six sequential jobs for fixer Mara Voss, each with a
 // glowing waypoint, an on-screen objective, and a cash reward. Progress saves.
+// Jobs 1–4 live here; jobs 5–6 (Portside docks, the last stand) live in
+// missions2.js and plug in when the mission index reaches 4.
 import { MISSIONS, MISSION_REWARD, WORLD } from './config.js';
 import { makeCar } from './traffic.js';
+import { updateExtraMissions, extraMissionWaypoint, extraMissionProgressText } from './missions2.js';
 
 export const MISSION_WAYPOINTS = [
   { x: 3120, y: 668 },   // East Pier (across the north bridge)
@@ -20,6 +23,8 @@ export function currentMission(missions) { return MISSIONS[missions.index] ?? nu
 export function missionWaypoint(state) {
   const m = state.missions;
   if (m.done) return null;
+  // Jobs 5–6 are owned by missions2.js (Portside crates, the last stand).
+  if (m.index >= 4) return extraMissionWaypoint(state);
   if (m.index === 1 && m.targetCar) return { x: m.targetCar.x, y: m.targetCar.y };
   if ((m.index === 2 || m.index === 3) && m.stage === 'escape') return HIDEOUT;
   return MISSION_WAYPOINTS[m.index];
@@ -37,6 +42,8 @@ export function startMissionTwo(state, random) {
 export function updateMissions(state, dt) {
   const m = state.missions;
   if (m.done) return;
+  // Jobs 5–6 are owned by missions2.js — hand the whole update over.
+  if (m.index >= 4) { updateExtraMissions(state, dt); return; }
   const p = state.player;
   const px = p.inCar ? p.inCar.x : p.x;
   const py = p.inCar ? p.inCar.y : p.y;
@@ -99,6 +106,8 @@ function completeMission(state, message) {
 export function missionProgressText(state) {
   const m = state.missions;
   if (m.done) return 'ALL MISSIONS COMPLETE';
+  // Jobs 5–6 report their own progress (crates secured, VPD cars down).
+  if (m.index >= 4) return extraMissionProgressText(state);
   const mission = MISSIONS[m.index];
   if ((m.index === 2 || m.index === 3) && m.stage === 'escape') return 'ESCAPE TO THE HIDEOUT!';
   if ((m.index === 2 || m.index === 3) && m.stage === 'grab') return 'GRAB THE CASH!';

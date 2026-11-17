@@ -76,3 +76,14 @@ export function nearestPoliceDistance(state) {
   }
   return best;
 }
+
+// Closest VPD patrol car to the player (or null when none is on the road).
+export function nearestPoliceCar(state) {
+  let best = null, bestD = Infinity;
+  for (const c of state.cars) {
+    if (!c.police) continue;
+    const d = Math.hypot(c.x - state.player.x, c.y - state.player.y);
+    if (d < bestD) { bestD = d; best = c; }
+  }
+  return best;
+}

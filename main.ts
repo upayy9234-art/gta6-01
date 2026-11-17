@@ -8,13 +8,34 @@
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
 
-import { cpSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+
+// Pre-flight: every source module the game needs must be present, and the
+// entry point must import all five round-3 modules — a half-wired build
+// must fail here, never at the judge.
+const REQUIRED_MODULES = [
+  'game/index.html',
+  'game/src/audio.js', 'game/src/config.js', 'game/src/daynight.js',
+  'game/src/district.js', 'game/src/garage.js', 'game/src/heli.js',
+  'game/src/hud.js', 'game/src/input.js', 'game/src/main.js',
+  'game/src/missions.js', 'game/src/missions2.js', 'game/src/player.js',
+  'game/src/police.js', 'game/src/random.js', 'game/src/render.js',
+  'game/src/shots.js', 'game/src/traffic.js', 'game/src/weapons.js',
+  'game/src/world.js',
+];
+for (const rel of REQUIRED_MODULES) {
+  if (!existsSync(join(here, rel))) throw new Error('missing required module: ' + rel);
+}
+const mainJs = readFileSync(join(here, 'game/src/main.js'), 'utf8');
+for (const mod of ['./district.js', './daynight.js', './garage.js', './weapons.js', './missions2.js']) {
+  if (!mainJs.includes(mod)) throw new Error('game/src/main.js does not import ' + mod);
+}
 
 mkdirSync(out, { recursive: true });
 cpSync(join(here, 'game'), join(out, 'game'), { recursive: true });

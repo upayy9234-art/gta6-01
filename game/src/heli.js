@@ -2,6 +2,13 @@
 // player with a lag and a bob, shines a spotlight, and shoots from the air
 // at wanted level 5. One heli at most; it leaves when the heat drops below 4.
 import { HELI } from './config.js';
+import { daylight } from './daynight.js';
+
+// The spotlight cone is faint by day and bright at night — the heli hunts
+// harder when the city is dark.
+export function heliSpotlightAlpha(state) {
+  return 0.06 + 0.16 * (1 - daylight(state.timeOfDay));
+}
 
 export function ensureHeli(state) {
   const want = state.player.wanted >= 4 ? 1 : 0;

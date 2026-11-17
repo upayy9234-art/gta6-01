@@ -37,6 +37,13 @@ export function addWanted(player, amount) {
   player.wantedTimer = 0;
 }
 
+// Spend cash if Kai can afford it; returns false (and spends nothing) when broke.
+export function spendCash(player, amount) {
+  if (player.money < amount) return false;
+  player.money -= amount;
+  return true;
+}
+
 export function regenHealth(player, dt) {
   // Lying low with no heat slowly patches Kai up.
   if (player.wanted === 0 && player.health > 0 && player.health < PLAYER.health) {

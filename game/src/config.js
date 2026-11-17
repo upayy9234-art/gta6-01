@@ -16,7 +16,9 @@ export const CAR = {
   maxSpeed: 560, turnRate: 2.6, drag: 0.55, grip: 6.5, health: 160,
 };
 export const WANTED = { decay: 0.045, perCrime: 1, max: 5, chaseSpeed: 500 };
-export const MISSION_REWARD = [400, 900, 2200, 3000];
+export const MISSION_REWARD = [400, 900, 2200, 3000, 4200, 6000];
+export const GARAGE = { x: 700, y: 388, label: 'VIRELIA MOTORS — GARAGE' };
+export const WEAPON_SHOP = { x: 500, y: 388, label: 'HARBOR ARMS — WEAPONS' };
 export const HELI = { speed: 430, hoverLag: 0.9, bobAmp: 12, shootRange: 520, fireInterval: 0.9, bulletSpeed: 700 };
 
 export const PALETTE = {
@@ -64,5 +66,17 @@ export const MISSIONS = [
     briefing: 'Mara Voss: "One last score, Kai. The Neon Strip casino counts its cash at dawn. Take it — then vanish before the heli finds you."',
     objective: 'Reach the Neon Strip casino, grab the cash, then escape to the hideout marker.',
     complete: 'THE NEON STRIP IS YOURS. Four jobs, one legend — Kai Mercer.',
+  },
+  {
+    id: 'portside', title: 'MISSION 5 — THE PORTSIDE JOB',
+    briefing: 'Mara Voss: "Kai, the docks. Three crates of \u2018imported goods\u2019 sitting in Portside. Lift them, then lose the VPD at the hideout. And Kai — don\u2019t ask what\u2019s inside."',
+    objective: 'Lift all 3 crates in the Portside docks, then escape to the hideout marker.',
+    complete: 'THE PORTSIDE JOB IS DONE. Three crates, zero questions asked.',
+  },
+  {
+    id: 'last-stand', title: 'MISSION 6 — THE LAST STAND',
+    briefing: 'Mara Voss: "Last one, Kai. The whole VPD is coming for you. Survive the storm, put six of their cars down, and run for the East Pier. Virelia is yours after this."',
+    objective: 'Survive wanted level 5: destroy 6 VPD cars, then escape to the East Pier.',
+    complete: 'VIRELIA IS YOURS! Six jobs done — Kai Mercer is a legend now.',
   },
 ];
