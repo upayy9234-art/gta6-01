@@ -37,6 +37,13 @@ export function addWanted(player, amount) {
   player.wantedTimer = 0;
 }
 
+export function regenHealth(player, dt) {
+  // Lying low with no heat slowly patches Kai up.
+  if (player.wanted === 0 && player.health > 0 && player.health < PLAYER.health) {
+    player.health = Math.min(PLAYER.health, player.health + 2.5 * dt);
+  }
+}
+
 export function decayWanted(player, dt, hidden) {
   // Wanted cools off slowly while the player stays out of police sight.
   if (player.wanted > 0 && hidden) {

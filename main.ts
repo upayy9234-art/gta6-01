@@ -8,7 +8,7 @@
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
 
-import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
@@ -20,6 +20,10 @@ mkdirSync(out, { recursive: true });
 cpSync(join(here, 'game'), join(out, 'game'), { recursive: true });
 mkdirSync(join(out, 'screenshots'), { recursive: true });
 if (existsSync(join(here, 'screenshots'))) cpSync(join(here, 'screenshots'), join(out, 'screenshots'), { recursive: true });
+// A dossier with no screenshots is a broken entry: refuse instead of shipping it.
+if (readdirSync(join(out, 'screenshots')).filter((f) => /\.(jpe?g|png)$/i.test(f)).length === 0) {
+  throw new Error('screenshots/ is empty — capture the 4 deterministic shots before handing in');
+}
 
 // The scorer's own caps: only text_max_bytes shapes the bytes; the others refuse an
 // entry the scorer would refuse (more than 4 screenshots or one over 256 KiB; more than

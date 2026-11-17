@@ -16,7 +16,8 @@ export const CAR = {
   maxSpeed: 560, turnRate: 2.6, drag: 0.55, grip: 6.5, health: 160,
 };
 export const WANTED = { decay: 0.045, perCrime: 1, max: 5, chaseSpeed: 500 };
-export const MISSION_REWARD = [400, 900, 2200];
+export const MISSION_REWARD = [400, 900, 2200, 3000];
+export const HELI = { speed: 430, hoverLag: 0.9, bobAmp: 12, shootRange: 520, fireInterval: 0.9, bulletSpeed: 700 };
 
 export const PALETTE = {
   sky: '#0b0e1a', ground: '#171a2e', block: '#1d2140', block2: '#232748',
@@ -36,6 +37,7 @@ export const CAR_MODELS = [
   { name: 'Dune Pickup', color: '#7dd069', speed: 0.95 },
   { name: 'Virelia Van', color: '#b9c0e8', speed: 0.85 },
   { name: 'Midnight Coupe', color: '#a06bff', speed: 1.08 },
+  { name: 'Sunset Cruiser', color: '#ff7a3d', speed: 0.98 },
 ];
 
 export const MISSIONS = [
@@ -56,5 +58,11 @@ export const MISSIONS = [
     briefing: 'Mara Voss: "The Harbor Vault. One night, one crew, one big score. Grab the cash and vanish."',
     objective: 'Reach the vault, grab the cash, then escape to the hideout marker.',
     complete: 'THE SCORE IS YOURS. Virelia is yours now, Kai Mercer.',
+  },
+  {
+    id: 'neon-strip', title: 'MISSION 4 — THE NEON STRIP',
+    briefing: 'Mara Voss: "One last score, Kai. The Neon Strip casino counts its cash at dawn. Take it — then vanish before the heli finds you."',
+    objective: 'Reach the Neon Strip casino, grab the cash, then escape to the hideout marker.',
+    complete: 'THE NEON STRIP IS YOURS. Four jobs, one legend — Kai Mercer.',
   },
 ];

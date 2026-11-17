@@ -4,6 +4,7 @@ export const ACTION_CONFIRM = 1;
 export const ACTION_PAUSE = 2;
 export const ACTION_ENTER_CAR = 4;
 export const ACTION_MUTE = 8;
+export const ACTION_HONK = 16;
 
 const UP = new Set(['KeyW', 'ArrowUp']);
 const DOWN = new Set(['KeyS', 'ArrowDown']);
@@ -23,6 +24,7 @@ export function createInput(canvas) {
       if (event.code === 'Escape' || event.code === 'KeyP') actions |= ACTION_PAUSE;
       if (event.code === 'KeyE') actions |= ACTION_ENTER_CAR;
       if (event.code === 'KeyM') actions |= ACTION_MUTE;
+      if (event.code === 'KeyH') actions |= ACTION_HONK;
     }
   });
   window.addEventListener('keyup', (event) => keys.delete(event.code));

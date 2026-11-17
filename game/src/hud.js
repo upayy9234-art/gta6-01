@@ -57,7 +57,7 @@ export function drawHUD(ctx, state) {
   ctx.fillStyle = 'rgba(8,10,24,0.6)';
   roundRect(ctx, 12, VIEW.height - 58, 330, 46, 8); ctx.fill();
   ctx.fillStyle = PALETTE.muted; ctx.font = '12px system-ui, sans-serif'; ctx.textAlign = 'left';
-  ctx.fillText(p.inCar ? 'WASD drive · E exit car · Space handbrake' : 'WASD move · Mouse aim · Click/Space shoot · E enter car', 22, VIEW.height - 46);
+  ctx.fillText(p.inCar ? 'WASD drive · E exit car · Space handbrake · H honk' : 'WASD move · Mouse aim · Click/Space shoot · E enter car', 22, VIEW.height - 46);
   ctx.fillText('Shift run · Esc pause · M sound · Cash: steal cars, finish missions', 22, VIEW.height - 28);
 
   // Clock + day/night label, left of the minimap so it never overlaps it.
@@ -82,6 +82,12 @@ function drawMinimap(ctx, state) {
   ctx.strokeStyle = '#3a3f66'; ctx.lineWidth = 3;
   for (let x = 388; x < WORLD.width; x += 436) { ctx.beginPath(); ctx.moveTo(x0 + x * sx, y0); ctx.lineTo(x0 + x * sx, y0 + size); ctx.stroke(); }
   for (let y = 388; y < WORLD.height; y += 436) { ctx.beginPath(); ctx.moveTo(x0, y0 + y * sy); ctx.lineTo(x0 + size, y0 + y * sy); ctx.stroke(); }
+  // Neon Strip casino district (gold) on the minimap.
+  const casino = state.city.casino;
+  if (casino) {
+    ctx.fillStyle = '#ffc53d';
+    ctx.fillRect(x0 + casino.x * sx, y0 + casino.y * sy, casino.w * sx, casino.h * sy);
+  }
   // Waypoint.
   const wp = missionWaypoint(state);
   if (wp && !state.missions.done) {
@@ -92,6 +98,9 @@ function drawMinimap(ctx, state) {
   // Police dots.
   ctx.fillStyle = '#2f7bff';
   for (const c of state.cars) if (c.police) { ctx.beginPath(); ctx.arc(x0 + c.x * sx, y0 + c.y * sy, 3, 0, Math.PI * 2); ctx.fill(); }
+  // Police helicopter dots (white).
+  ctx.fillStyle = '#ffffff';
+  for (const heli of state.helis ?? []) { ctx.beginPath(); ctx.arc(x0 + heli.x * sx, y0 + heli.y * sy, 4, 0, Math.PI * 2); ctx.fill(); }
   // Player arrow.
   const p = state.player;
   const px = p.inCar ? p.inCar.x : p.x, py = p.inCar ? p.inCar.y : p.y;

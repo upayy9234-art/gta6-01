@@ -5,12 +5,13 @@
 import { BEST_KEY, SAVE_KEY, STEP, VIEW, WORLD } from './config.js';
 import { createRandom } from './random.js';
 import { buildCity, isOnRoad } from './world.js';
-import { createPlayer, updatePlayerOnFoot, playerShoot, addWanted, decayWanted } from './player.js';
+import { createPlayer, updatePlayerOnFoot, playerShoot, addWanted, decayWanted, regenHealth } from './player.js';
 import { spawnTrafficCar, spawnPedestrian, updateCarPhysics, updateTrafficCar, updatePedestrian, burst, makeCar } from './traffic.js';
 import { ensurePolice, updatePoliceCar, nearestPoliceDistance } from './police.js';
+import { ensureHeli, updateHeli } from './heli.js';
 import { createMissions, updateMissions, missionWaypoint } from './missions.js';
 import { createAudio } from './audio.js';
-import { ACTION_CONFIRM, ACTION_PAUSE, ACTION_ENTER_CAR, ACTION_MUTE, createInput } from './input.js';
+import { ACTION_CONFIRM, ACTION_PAUSE, ACTION_ENTER_CAR, ACTION_MUTE, ACTION_HONK, createInput } from './input.js';
 import { createRenderer, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE, SCREEN_WIN } from './render.js';
 import { stageShot } from './shots.js';
 
@@ -32,7 +33,7 @@ function createState() {
     camera: { x: 388, y: 388, scale: 1 },
     city: buildCity(random),
     player: createPlayer(388, 388),
-    cars: [], peds: [], bullets: [], particles: [],
+    cars: [], peds: [], bullets: [], particles: [], helis: [], prevWanted: 0,
     missions: createMissions(),
   };
   for (let i = 0; i < 10; i += 1) state.cars.push(spawnTrafficCar(random, state));
@@ -64,7 +65,7 @@ function loadGame() {
     state.player.money = data.money ?? 250;
     state.score = data.score ?? 0;
     state.player.x = data.x ?? 388; state.player.y = data.y ?? 388;
-    if (Number.isInteger(data.mission) && data.mission > 0 && data.mission < 3) state.missions.index = data.mission;
+    if (Number.isInteger(data.mission) && data.mission > 0 && data.mission < 4) state.missions.index = data.mission;
     return true;
   } catch { return false; }
 }
@@ -193,6 +194,12 @@ state.stepWorld = function stepWorld(dt, input) {
   // Keep traffic topped up near the player.
   if (state.cars.filter((c) => c.npc && !c.police).length < 9) state.cars.push(spawnTrafficCar(random, state));
   ensurePolice(state, random);
+  // Wanted siren on heat rising; police helicopter at wanted 4+.
+  if (p.wanted > state.prevWanted) state.audio?.siren();
+  state.prevWanted = p.wanted;
+  ensureHeli(state);
+  for (const heli of state.helis) updateHeli(heli, dt, state);
+  regenHealth(p, dt);
   updateMissions(state, dt);
   decayWanted(p, dt, nearestPoliceDistance(state) > 520);
   updateBullets(dt);
@@ -240,7 +247,7 @@ function runGame() {
     if (!started) { loadGame(); started = true; }
     state.screen = SCREEN_PLAY; screen = SCREEN_PLAY;
     audio.unlock();
-    announce('Playing. Mission: ' + (state.missions.index + 1) + ' of 3.');
+    announce('Playing. Mission: ' + (state.missions.index + 1) + ' of 4.');
   }
   function endGame() {
     screen = SCREEN_OVER;
@@ -250,6 +257,7 @@ function runGame() {
   function handleActions() {
     const actions = input.takeActions();
     if (actions & ACTION_MUTE) { const muted = audio.toggleMute(); announce(muted ? 'Sound off.' : 'Sound on.'); }
+    if (actions & ACTION_HONK && screen === SCREEN_PLAY && state.player.inCar) audio.honk();
     if (actions & ACTION_ENTER_CAR && screen === SCREEN_PLAY) enterOrExitCar();
     if (actions & ACTION_CONFIRM && (screen === SCREEN_TITLE || screen === SCREEN_OVER || screen === SCREEN_WIN)) {
       if (screen === SCREEN_OVER || screen === SCREEN_WIN) {

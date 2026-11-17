@@ -44,7 +44,10 @@ export function buildCity(random) {
   const parks = [];
   const lamps = [];
   const xs = roadCentersX(); const ys = roadCentersY();
-  const palette = ['#2a2f55', '#33284f', '#1f3a52', '#3d2b4d', '#27395e', '#40304a'];
+  const palette = random.shuffle(['#2a2f55', '#33284f', '#1f3a52', '#3d2b4d', '#27395e', '#40304a']);
+  // The Neon Strip: block (i=1, j=0) becomes the casino district — one landmark
+  // casino building in purple and gold instead of ordinary blocks.
+  const casino = { x: 886, y: 450, w: 312, h: 312, cx: 1042, cy: 606 };
   // Blocks sit between neighbouring roads.
   for (let i = 0; i < xs.length - 1; i += 1) {
     for (let j = 0; j < ys.length - 1; j += 1) {
@@ -53,6 +56,14 @@ export function buildCity(random) {
       if (x0 > 2900) continue; // river side stays open waterfront
       // Central block becomes Harbor Park.
       if (i === 3 && j === 2) { parks.push({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }); continue; }
+      // North-west block becomes the Neon Strip casino district.
+      if (i === 1 && j === 0) {
+        buildings.push({
+          x: casino.x + 26, y: casino.y + 26, w: casino.w - 52, h: casino.h - 52,
+          color: '#3b1d6e', neon: '#ffc53d', height: 4, windows: 20, casino: true,
+        });
+        continue;
+      }
       const cols = random.int(1, 2); const rows = random.int(1, 2);
       const cw = (x1 - x0) / cols, ch = (y1 - y0) / rows;
       for (let c = 0; c < cols; c += 1) for (let r = 0; r < rows; r += 1) {
@@ -70,7 +81,7 @@ export function buildCity(random) {
   // Street lamps along every road.
   for (const cx of xs) for (let y = 60; y < WORLD.height; y += 260) lamps.push({ x: cx + WORLD.road / 2 - 6, y });
   for (const cy of ys) for (let x = 60; x < WORLD.width; x += 260) lamps.push({ x, y: cy + WORLD.road / 2 - 6 });
-  return { buildings, parks, lamps };
+  return { buildings, parks, lamps, casino };
 }
 
 export function collideBuildings(state, x, y, radius) {

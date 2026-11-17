@@ -12,5 +12,13 @@ export function createRandom(seed) {
     range(min, max) { return min + this.next() * (max - min); },
     int(min, max) { return Math.floor(this.range(min, max + 1)); },
     pick(list) { return list[Math.floor(this.next() * list.length)]; },
+    bool(prob) { return this.next() < prob; },
+    shuffle(list) {
+      for (let i = list.length - 1; i > 0; i -= 1) {
+        const j = Math.floor(this.next() * (i + 1));
+        [list[i], list[j]] = [list[j], list[i]];
+      }
+      return list;
+    },
   };
 }

@@ -41,6 +41,9 @@ export function createAudio() {
     hurt() { tone(160, 0.25, 'sawtooth', 0.12); },
     pickup() { tone(660, 0.08, 'sine', 0.1); tone(990, 0.12, 'sine', 0.1, 0.08); },
     mission() { [523, 659, 784, 1046].forEach((f, i) => tone(f, 0.18, 'triangle', 0.12, i * 0.1)); },
+    siren() { tone(660, 0.22, 'square', 0.07); tone(520, 0.22, 'square', 0.07, 0.22); tone(660, 0.22, 'square', 0.07, 0.44); },
+    rotor() { noise(0.3, 0.05); tone(58, 0.3, 'sawtooth', 0.05); },
+    honk() { tone(370, 0.16, 'square', 0.09); tone(466, 0.16, 'square', 0.07); },
     win() { [523, 659, 784, 1046, 1318].forEach((f, i) => tone(f, 0.3, 'triangle', 0.14, i * 0.13)); },
     update(dt, driving) {
       if (muted) return;

@@ -31,17 +31,17 @@ export function stageShot(name, state) {
     return { screen: SCREEN_TITLE };
   }
   if (name === 'chase') {
-    // Put Kai in a fast car, wanted level 4, police already closing in.
+    // Put Kai in a fast car, wanted level 5, police + heli already closing in.
     const car = makeCar(state.player.x + 40, state.player.y, 0, CAR_MODELS[1], {});
     state.cars.push(car);
     state.player.inCar = car; state.player.x = car.x; state.player.y = car.y;
-    addWanted(state.player, 4);
+    addWanted(state.player, 5);
     driveForward(state, 5);
     return { screen: SCREEN_PLAY };
   }
   if (name === 'win') {
-    state.missions.index = 3; state.missions.done = true;
-    state.player.money = 4850; state.score = 12400;
+    state.missions.index = 4; state.missions.done = true;
+    state.player.money = 7850; state.score = 18400;
     state.screen = 'win';
     walkForward(state, 2);
     return { screen: SCREEN_WIN };

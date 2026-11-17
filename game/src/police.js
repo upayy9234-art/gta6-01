@@ -37,7 +37,8 @@ export function updatePoliceCar(car, dt, state) {
   while (diff > Math.PI) diff -= Math.PI * 2;
   while (diff < -Math.PI) diff += Math.PI * 2;
   car.angle += Math.max(-2.4 * dt, Math.min(2.4 * dt, diff));
-  const wantSpeed = Math.min(WANTED.chaseSpeed, 380 + state.player.wanted * 30);
+  // At wanted 5 the VPD drives harder and shoots farther and faster.
+  const wantSpeed = Math.min(WANTED.chaseSpeed + (state.player.wanted >= 5 ? 60 : 0), 380 + state.player.wanted * 30);
   car.speed += (wantSpeed - car.speed) * dt * 0.8;
   car.x += Math.cos(car.angle) * car.speed * dt;
   car.y += Math.sin(car.angle) * car.speed * dt;
@@ -57,7 +58,9 @@ export function updatePoliceCar(car, dt, state) {
     }
   }
   // Police shoot at high wanted levels when close.
-  if (state.player.wanted >= 3 && d < 420 && Math.random() < dt * 0.5) {
+  const shootRange = state.player.wanted >= 5 ? 520 : 420;
+  const shootRate = state.player.wanted >= 5 ? 1.1 : 0.5;
+  if (state.player.wanted >= 3 && d < shootRange && Math.random() < dt * shootRate) {
     const a = Math.atan2(py - car.y, px - car.x) + (Math.random() - 0.5) * 0.2;
     state.bullets.push({ x: car.x, y: car.y, vx: Math.cos(a) * 640, vy: Math.sin(a) * 640, life: 0.8, fromPolice: true });
     state.audio?.shoot();

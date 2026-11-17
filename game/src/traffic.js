@@ -75,7 +75,7 @@ export function updateTrafficCar(car, dt, state, random) {
   // Cruise along its road; at an intersection sometimes turn.
   const nearX = roadCentersX().some((cx) => Math.abs(car.x - cx) < 14);
   const nearY = roadCentersY().some((cy) => Math.abs(car.y - cy) < 14);
-  if ((nearX || nearY) && random.next() < dt * 0.35) {
+  if ((nearX || nearY) && random.bool(dt * 0.35)) {
     const turns = [0, Math.PI / 2, -Math.PI / 2];
     car.angle += random.pick(turns);
   }
@@ -83,11 +83,15 @@ export function updateTrafficCar(car, dt, state, random) {
   const road = nearestRoadPoint(car.x, car.y);
   car.x += Math.cos(car.angle) * car.speed * dt;
   car.y += Math.sin(car.angle) * car.speed * dt;
-  // Slow for a car ahead on the same road.
+  // Slow for a car ahead on the same road — and honk at it while stuck.
+  car.honk = Math.max(0, car.honk - dt);
   for (const other of state.cars) {
     if (other === car || other.police) continue;
     const dx = other.x - car.x, dy = other.y - car.y;
-    if (Math.hypot(dx, dy) < 90 && Math.abs(Math.atan2(dy, dx) - car.angle) < 0.6) car.speed = Math.max(60, car.speed - 200 * dt);
+    if (Math.hypot(dx, dy) < 90 && Math.abs(Math.atan2(dy, dx) - car.angle) < 0.6) {
+      car.speed = Math.max(60, car.speed - 200 * dt);
+      if (car.honk <= 0) { car.honk = 0.9; state.audio?.honk(); }
+    }
   }
   if (car.x < 40 || car.x > WORLD.width - 480 || car.y < 40 || car.y > WORLD.height - 40) {
     // Recycle far-away traffic back onto a road near the player.

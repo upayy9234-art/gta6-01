@@ -75,6 +75,19 @@ function drawWorld(ctx, state) {
       ctx.beginPath(); ctx.arc(tx, ty, 22, 0, Math.PI * 2); ctx.fill();
     }
   }
+  // Neon Strip casino district: gold trim, neon sign and world label.
+  const casino = state.city.casino;
+  if (casino) {
+    ctx.fillStyle = '#2a1250'; ctx.fillRect(casino.x, casino.y, casino.w, casino.h);
+    ctx.strokeStyle = PALETTE.neonGold; ctx.lineWidth = 5;
+    ctx.strokeRect(casino.x + 6, casino.y + 6, casino.w - 12, casino.h - 12);
+    ctx.fillStyle = PALETTE.neonGold; ctx.font = 'bold 20px system-ui, sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('NEON STRIP', casino.cx, casino.y + 20);
+    ctx.fillStyle = '#ff2e88'; ctx.font = 'bold 15px system-ui, sans-serif';
+    ctx.fillText('★ CASINO ★', casino.cx, casino.y + casino.h - 8);
+    ctx.fillStyle = 'rgba(255,197,61,0.25)';
+    ctx.beginPath(); ctx.arc(casino.cx, casino.cy, 46, 0, Math.PI * 2); ctx.fill();
+  }
   // Buildings with lit windows and neon signs.
   for (const b of state.city.buildings) {
     if (b.x > cam.x + vw / 2 + 100 || b.x + b.w < cam.x - vw / 2 - 100 || b.y > cam.y + vh / 2 + 100 || b.y + b.h < cam.y - vh / 2 - 100) continue;
@@ -176,6 +189,27 @@ function drawEntities(ctx, state) {
     ctx.strokeStyle = 'rgba(255,210,61,0.5)'; ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x + Math.cos(p.angle) * 44, p.y + Math.sin(p.angle) * 44); ctx.stroke();
   }
+  // Police helicopters: spotlight cone, body and spinning rotor.
+  for (const heli of state.helis ?? []) {
+    const hx = heli.x, hy = heli.y + (heli.bob ?? 0);
+    const px = state.player.inCar ? state.player.inCar.x : state.player.x;
+    const py = state.player.inCar ? state.player.inCar.y : state.player.y;
+    ctx.save();
+    ctx.fillStyle = 'rgba(255,240,180,0.13)';
+    ctx.beginPath(); ctx.moveTo(hx, hy);
+    ctx.lineTo(px - 40, py - 40); ctx.lineTo(px + 40, py + 40); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.beginPath(); ctx.ellipse(hx + 8, hy + 10, 30, 12, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.translate(hx, hy); ctx.rotate(heli.angle);
+    ctx.fillStyle = '#1c1f2e'; roundRect(ctx, -26, -12, 52, 24, 10); ctx.fill();
+    ctx.fillStyle = '#2f7bff'; ctx.fillRect(-24, -12, 10, 24);
+    ctx.fillStyle = '#ff3b30'; ctx.beginPath(); ctx.arc(-18, 0, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(180,220,255,0.9)'; ctx.fillRect(2, -8, 12, 16);
+    ctx.strokeStyle = '#c9d2ff'; ctx.lineWidth = 3;
+    const rot = heli.rotorPhase ?? 0;
+    ctx.beginPath(); ctx.moveTo(Math.cos(rot) * -38, Math.sin(rot) * -8); ctx.lineTo(Math.cos(rot) * 38, Math.sin(rot) * 8); ctx.stroke();
+    ctx.restore();
+  }
   // Off-screen waypoint arrow at the view edge.
   const wp = missionWaypoint(state);
   if (wp && !state.missions.done) {
@@ -205,10 +239,10 @@ function drawTitle(ctx, state, best) {
   ctx.fillText('AN OPEN-WORLD CRIME STORY  ·  VIRELIA', VIEW.width / 2, 212);
   ctx.fillStyle = PALETTE.text; ctx.font = '16px system-ui, sans-serif';
   ctx.fillText('Kai Mercer. One last job for fixer Mara Voss. Steal cars, outrun the VPD,', VIEW.width / 2, 268);
-  ctx.fillText('finish three missions and take the Harbor Vault score.', VIEW.width / 2, 292);
+  ctx.fillText('finish four missions, rob the Neon Strip casino, and take the Harbor Vault score.', VIEW.width / 2, 292);
   ctx.fillStyle = PALETTE.muted; ctx.font = '15px system-ui, sans-serif';
   ctx.fillText('WASD move / drive  ·  Mouse aim  ·  Click or Space shoot  ·  E enter / exit car', VIEW.width / 2, 340);
-  ctx.fillText('Shift run  ·  Esc pause  ·  M sound  ·  Progress saves automatically', VIEW.width / 2, 364);
+  ctx.fillText('Shift run  ·  H honk  ·  Esc pause  ·  M sound  ·  Progress saves automatically', VIEW.width / 2, 364);
   const pulse = 0.7 + Math.sin(state.time * 3) * 0.3;
   ctx.globalAlpha = pulse;
   ctx.fillStyle = PALETTE.neonGold; ctx.font = 'bold 24px system-ui, sans-serif';
@@ -246,8 +280,8 @@ function drawWin(ctx, state) {
   ctx.fillStyle = PALETTE.neonGold; ctx.textAlign = 'center'; ctx.font = 'bold 60px system-ui, sans-serif';
   ctx.fillText('THE SCORE IS YOURS', VIEW.width / 2, 280);
   ctx.fillStyle = PALETTE.text; ctx.font = '18px system-ui, sans-serif';
-  ctx.fillText('Kai Mercer walks away from the Harbor Vault with the whole score.', VIEW.width / 2, 330);
-  ctx.fillText('Mara Voss smiles. Virelia is yours now.', VIEW.width / 2, 358);
+  ctx.fillText('Kai Mercer walks away from the Harbor Vault and the Neon Strip with the whole score.', VIEW.width / 2, 330);
+  ctx.fillText('Four jobs done. Mara Voss smiles. Virelia is yours now.', VIEW.width / 2, 358);
   ctx.fillText('Final score ' + state.score.toLocaleString('en-US') + '   ·   Cash $' + state.player.money.toLocaleString('en-US'), VIEW.width / 2, 400);
   ctx.fillStyle = PALETTE.neonCyan; ctx.font = 'bold 20px system-ui, sans-serif';
   ctx.fillText('CLICK OR PRESS SPACE TO PLAY AGAIN', VIEW.width / 2, 470);
