@@ -1,0 +1,60 @@
+// Player state: on-foot movement with mouse aim, shooting, entering/exiting cars,
+// health, money and the wanted level. Driving physics live in traffic.js.
+import { PLAYER, WORLD } from './config.js';
+import { collideBuildings, isInWater, isOnRoad } from './world.js';
+
+export function createPlayer(x, y) {
+  return {
+    x, y, angle: -Math.PI / 2, speed: 0, health: PLAYER.health, money: 250,
+    wanted: 0, wantedTimer: 0, inCar: null, fireCooldown: 0, invulnerable: 0,
+    moving: false, onFoot: true, dead: false,
+  };
+}
+
+export function updatePlayerOnFoot(player, input, dt, state) {
+  const speed = input.run() ? PLAYER.runSpeed : PLAYER.walkSpeed;
+  let mx = input.moveX(); let my = (input.down() ? 1 : 0) - (input.up() ? 1 : 0);
+  const len = Math.hypot(mx, my) || 1;
+  mx /= len; my /= len;
+  player.moving = mx !== 0 || my !== 0;
+  let nx = player.x + mx * speed * dt;
+  let ny = player.y + my * speed * dt;
+  nx = Math.max(PLAYER.radius, Math.min(WORLD.width - PLAYER.radius, nx));
+  ny = Math.max(PLAYER.radius, Math.min(WORLD.height - PLAYER.radius, ny));
+  if (!collideBuildings(state, nx, player.y, PLAYER.radius) && !isInWater(nx, player.y)) player.x = nx;
+  if (!collideBuildings(state, player.x, ny, PLAYER.radius) && !isInWater(player.x, ny)) player.y = ny;
+  // Aim at the mouse (screen space -> world space via camera stored on state).
+  const cam = state.camera;
+  const wx = cam.x + (input.mouse().x / cam.scale - 640);
+  const wy = cam.y + (input.mouse().y / cam.scale - 360);
+  player.angle = Math.atan2(wy - player.y, wx - player.x);
+  player.fireCooldown = Math.max(0, player.fireCooldown - dt);
+  player.invulnerable = Math.max(0, player.invulnerable - dt);
+}
+
+export function addWanted(player, amount) {
+  player.wanted = Math.min(5, player.wanted + amount);
+  player.wantedTimer = 0;
+}
+
+export function decayWanted(player, dt, hidden) {
+  // Wanted cools off slowly while the player stays out of police sight.
+  if (player.wanted > 0 && hidden) {
+    player.wantedTimer += dt;
+    if (player.wantedTimer > 14) { player.wanted -= 1; player.wantedTimer = 0; }
+  } else player.wantedTimer = 0;
+}
+
+export function playerShoot(player, state) {
+  if (player.fireCooldown > 0 || player.inCar) return;
+  player.fireCooldown = PLAYER.fireInterval;
+  state.bullets.push({
+    x: player.x + Math.cos(player.angle) * 22, y: player.y + Math.sin(player.angle) * 22,
+    vx: Math.cos(player.angle) * PLAYER.bulletSpeed, vy: Math.sin(player.angle) * PLAYER.bulletSpeed,
+    life: 0.7, fromPolice: false,
+  });
+  state.audio?.shoot();
+  state.particles.push({ x: player.x + Math.cos(player.angle) * 26, y: player.y + Math.sin(player.angle) * 26, vx: Math.cos(player.angle) * 60, vy: Math.sin(player.angle) * 60, life: 0.12, max: 0.12, color: '#ffe27a', size: 4 });
+}
+
+export function isPlayerOnRoad(player) { return isOnRoad(player.x, player.y); }
