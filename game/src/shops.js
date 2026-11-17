@@ -99,6 +99,16 @@ export function shopSummary(state) {
   return near ? 'Press E — ' + near.name + ' (' + near.tag + ')' : '';
 }
 
+// Round 6: the shopkeeper's weather tip — a line in the panel when the sky
+// turns, so a shopping trip doubles as a forecast.
+export function shopWeatherTip(state) {
+  const kind = state.weather ? state.weather.kind : 'clear';
+  if (kind === 'rain') return '🌧️ Rain outside — the streets are slick, take it slow.';
+  if (kind === 'storm') return '⛈️ Storm outside — lightning over the harbour, stay sharp.';
+  if (kind === 'fog') return '🌫️ Fog outside — you can barely see the next block.';
+  return '';
+}
+
 export function drawShopPanel(ctx, state) {
   const shops = state.shops;
   if (!shops || !shops.open) return;
@@ -139,6 +149,11 @@ export function drawShopPanel(ctx, state) {
   if (shops.lastBought) {
     ctx.fillStyle = '#3ddc84'; ctx.font = '14px system-ui, sans-serif';
     ctx.fillText('Last bought: ' + shops.lastBought, x + 28, rowY + 4);
+  }
+  const tip = shopWeatherTip(state);
+  if (tip) {
+    ctx.fillStyle = '#7cc7ff'; ctx.font = 'bold 13px system-ui, sans-serif';
+    ctx.fillText(tip, x + 28, rowY + 26);
   }
   ctx.fillStyle = '#f2f4ff'; ctx.font = 'bold 14px system-ui, sans-serif';
   ctx.textAlign = 'center';

@@ -2,7 +2,8 @@
 // chatter. The ticker cycles every few seconds between the current track and a
 // dispatch line, so the HUD always has something new to read. Track names live
 // here (and in audio.js, which hums the bassline); the station can be switched
-// with the R key while playing.
+// with the R key while playing. Round 6: when the weather turns, dispatch
+// starts reporting on it — rain, fog and storms all get a line on the wire.
 import { RADIO_DISPATCH, RADIO_STATIONS as STATIONS } from './config.js';
 
 export const RADIO_STATIONS = STATIONS;
@@ -29,6 +30,15 @@ function dispatchLine(radio) {
   return 'VPD DISPATCH · ' + RADIO_DISPATCH[radio.line % RADIO_DISPATCH.length];
 }
 
+// Round 6 weather reports: when the sky turns, dispatch says so on the wire.
+export function weatherReportLine(state) {
+  const kind = state.weather ? state.weather.kind : 'clear';
+  if (kind === 'rain') return 'VPD DISPATCH · Rain over the harbour — wet roads, drive careful out there';
+  if (kind === 'storm') return 'VPD DISPATCH · Storm warning — lightning over Virelia, all units watch the skies';
+  if (kind === 'fog') return 'VPD DISPATCH · Fog rolling in off the water — visibility down across the city';
+  return '';
+}
+
 export function updateRadio(state, dt) {
   const radio = state.radio;
   if (!radio) return;
@@ -40,6 +50,9 @@ export function updateRadio(state, dt) {
   if (radio.line % 2 === 0) {
     radio.track += 1;
     radio.current = trackLine(radio);
+  } else if (radio.line % 8 === 7 && weatherReportLine(state)) {
+    // Every fourth dispatch slot carries the weather report instead.
+    radio.current = weatherReportLine(state);
   } else {
     radio.current = dispatchLine(radio);
   }

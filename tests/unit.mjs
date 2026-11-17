@@ -7,6 +7,8 @@ import { dayPhase, phaseLabel, daylight, goldenFactor, skyState, shadowStretch }
 import { MISSIONS, MISSION_REWARD, SHOPS, RADIO_STATIONS } from '../game/src/config.js';
 import { buildCity } from '../game/src/world.js';
 import { createRadio, updateRadio, radioTickerText, cycleStation } from '../game/src/radio.js';
+import { weatherReportLine } from '../game/src/radio.js';
+import { shopWeatherTip } from '../game/src/shops.js';
 import { createShops, buyShopItem, nearestShop } from '../game/src/shops.js';
 import { createDay3, updateDay3Missions, day3Waypoint, day3ProgressText } from '../game/src/missions3.js';
 import { createWeather, updateWeather, forceWeather, gripFor, weatherLabel } from '../game/src/weather.js';
@@ -272,6 +274,27 @@ function check(name, ok, detail = '') {
   sideLoadData(state2, saved);
   check('save/load restores collected postcards', state2.side.collected === 1 && state2.side.postcards[0].taken === true,
     `collected=${state2.side.collected}`);
+}
+
+// --- round 6: radio weather reports + shop weather tips ---
+{
+  check('radio reports the rain on the wire', weatherReportLine({ weather: { kind: 'rain' } }).includes('Rain over the harbour'));
+  check('radio reports the storm on the wire', weatherReportLine({ weather: { kind: 'storm' } }).includes('Storm warning'));
+  check('radio stays quiet when clear', weatherReportLine({ weather: { kind: 'clear' } }) === '');
+  check('shop tips about the rain', shopWeatherTip({ weather: { kind: 'rain' } }).includes('slick'));
+  check('shop stays quiet when clear', shopWeatherTip({ weather: { kind: 'clear' } }) === '');
+  // The ticker actually serves the weather line in the rotation.
+  const state = {
+    radio: createRadio(), bannerText: '', bannerTimer: 0,
+    weather: { kind: 'storm', gripMul: 0.78 },
+    audio: { tune() {} },
+  };
+  let sawStorm = false;
+  for (let i = 0; i < 16; i += 1) {
+    updateRadio(state, 5.1);
+    if (radioTickerText(state).includes('Storm warning')) sawStorm = true;
+  }
+  check('ticker rotation serves a storm report', sawStorm);
 }
 
 console.log(failures === 0 ? '\nALL UNIT TESTS PASSED' : `\n${failures} UNIT TEST FAILURES`);
