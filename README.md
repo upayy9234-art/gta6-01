@@ -52,7 +52,20 @@ cd game && python3 -m http.server 8080
 # then open http://localhost:8080 in a desktop browser
 ```
 
-Screenshot scenes (deterministic): `?shot=start|play|chase|win&seed=1`.
+## Screenshots
+
+Four deterministic screenshots live in `screenshots/`, each a 1280x720 JPEG captured from a
+fixed scene in the game:
+
+| File | Scene |
+|---|---|
+| `screenshots/1-start.jpg` | Title screen — the Neon Harbor logo, "Press Enter to start", and the Virelia skyline. |
+| `screenshots/2-play.jpg` | Street action — Kai on foot in the neon city, traffic and pedestrians around him. |
+| `screenshots/3-chase.jpg` | Police chase — VPD patrol cars closing in under a rising wanted level. |
+| `screenshots/4-win.jpg` | Victory screen — the Harbor Vault job done and the score banked. |
+
+Every shot is reproducible: open the game with `?shot=start|play|chase|win&seed=1` and the same
+seeded scene renders every time, so each screenshot above matches exactly what you see in the browser.
 
 ## Tech
 
