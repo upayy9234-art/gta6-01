@@ -8,6 +8,7 @@ import { addWanted } from './player.js';
 import { makeCar } from './traffic.js';
 import { CAR_MODELS } from './config.js';
 import { applyGarageToCar } from './garage.js';
+import { forceWeather } from './weather.js';
 
 function driveForward(state, seconds) {
   const fakeInput = {
@@ -36,6 +37,9 @@ export function stageShot(name, state) {
   if (name === 'chase') {
     // Put Kai in a fast car, wanted level 5, police + heli already closing in.
     // Round 5: engine Lv2 + nitro fitted, Long Pier Rifle in hand.
+    // Round 6: it is RAINING — slick roads, rain streaks, wet shine — and the
+    // wanted-5 lockdown seals a road ahead with a roadblock and sends a
+    // second helicopter up. The 5 s drive lets both spawn for the frame.
     const car = makeCar(state.player.x + 40, state.player.y, 0, CAR_MODELS[1], {});
     state.cars.push(car);
     state.player.inCar = car; state.player.x = car.x; state.player.y = car.y;
@@ -43,6 +47,7 @@ export function stageShot(name, state) {
     applyGarageToCar(state, car);
     state.weapons.owned.rifle = true; state.weapons.current = 'rifle'; state.weapons.ammo.rifle = 60;
     addWanted(state.player, 5);
+    forceWeather(state, 'rain');
     driveForward(state, 5);
     // Driving east passes the SMG crate at (500,388), which auto-equips —
     // put the rifle back in Kai's hands for the frame.
@@ -60,6 +65,10 @@ export function stageShot(name, state) {
     for (const id of ['smg', 'shotgun', 'rifle']) state.weapons.owned[id] = true;
     state.weapons.ammo.smg = 240; state.weapons.ammo.shotgun = 40; state.weapons.ammo.rifle = 60;
     state.weapons.current = 'rifle';
+    // Round 6: the postcard hunt is finished too — all 10 found, 10/10 on the HUD.
+    for (const card of state.side.postcards) card.taken = true;
+    state.side.collected = 10;
+    state.side.faresDone = 14;
     state.screen = 'win';
     walkForward(state, 2);
     return { screen: SCREEN_WIN };
@@ -67,11 +76,15 @@ export function stageShot(name, state) {
   // play: Kai driving through golden-hour traffic toward mission 1, mid-action.
   // Round 5: starts at the garage door with the SMG, drives 3.5 s east past
   // Virelia Motors so the garage marker, shop signs and the weapon HUD show.
+  // Round 6: a taxi passenger waits at the kerb just ahead (gold "$" marker)
+  // and the Virelia Motors postcard sits on the garage doorstep, so the new
+  // side activities read in the opening frame.
   state.player.x = 470; state.player.y = 388;
   state.weapons.owned.smg = true; state.weapons.current = 'smg'; state.weapons.ammo.smg = 182;
   const car = makeCar(state.player.x + 40, state.player.y, 0, CAR_MODELS[0], {});
   state.cars.push(car);
   state.player.inCar = car; state.player.x = car.x; state.player.y = car.y;
+  state.side.fares.push({ x: 760, y: 436, waiting: true, dest: null, timer: 0, pay: 0, id: 6001 });
   addWanted(state.player, 1);
   driveForward(state, 3.5);
   return { screen: SCREEN_PLAY };

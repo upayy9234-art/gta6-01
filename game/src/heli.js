@@ -1,6 +1,8 @@
 // Police helicopter: spawns once the wanted level hits 4, hovers above the
 // player with a lag and a bob, shines a spotlight, and shoots from the air
-// at wanted level 5. One heli at most; it leaves when the heat drops below 4.
+// at wanted level 5. One heli at most — two at wanted 5, when the VPD
+// lockdown sends a second bird up from the opposite side. The helis leave
+// when the heat drops below 4.
 // During the Day 3 finale the heli sweeps its spotlight in a slow circle while
 // it hunts, so the chase reads even from the minimap.
 import { HELI } from './config.js';
@@ -13,12 +15,15 @@ export function heliSpotlightAlpha(state) {
 }
 
 export function ensureHeli(state) {
-  const want = state.player.wanted >= 4 ? 1 : 0;
+  // One heli at wanted 4; at wanted 5 the LOCKDOWN sends a second one up,
+  // sweeping in from the opposite side so Kai is boxed in from the air.
+  const want = state.player.wanted >= 5 ? 2 : state.player.wanted >= 4 ? 1 : 0;
   if (state.helis.length < want) {
+    const second = state.helis.length === 1;
     state.helis.push({
-      x: state.player.x + 220, y: state.player.y - 260,
+      x: state.player.x + (second ? -240 : 220), y: state.player.y + (second ? 260 : -260),
       angle: 0, bob: 0, fireCooldown: 0.6, rotorPhase: 0, rotorCd: 0,
-      sweep: 0,
+      sweep: second ? Math.PI : 0,
     });
     state.audio?.siren();
   }

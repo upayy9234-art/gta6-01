@@ -3,6 +3,9 @@
 // high wanted levels. Busted when health hits zero; escaping (out of sight) cools
 // the wanted level down. At wanted 0 two patrol cars still cruise the boulevard
 // and the Strip — the city feels watched even before Kai does anything wrong.
+// Round 6: at wanted 3+ the VPD seals roads with roadblocks (see wanted.js);
+// at wanted 5 the LOCKDOWN makes every chaser faster and a second helicopter
+// joins the hunt (see heli.js).
 import { WANTED } from './config.js';
 import { makeCar } from './traffic.js';
 
@@ -27,7 +30,9 @@ export function ensurePatrol(state, random) {
 
 export function ensurePolice(state, random) {
   const want = policeCountFor(state.player.wanted);
-  const have = state.cars.filter((c) => c.police && !c.patrol).length;
+  // Roadblock cars are parked VPD, not chasers — they never count here and
+  // are never removed as "surplus" (wanted.js owns their lifetime).
+  const have = state.cars.filter((c) => c.police && !c.patrol && !c.roadblock).length;
   for (let i = have; i < want; i += 1) {
     const a = random.next() * Math.PI * 2;
     const x = state.player.x + Math.cos(a) * 700;
@@ -39,7 +44,7 @@ export function ensurePolice(state, random) {
   // Remove surplus police when wanted falls (patrol cars are never removed here).
   let surplus = have - want;
   for (let i = state.cars.length - 1; i >= 0 && surplus > 0; i -= 1) {
-    if (state.cars[i].police && !state.cars[i].patrol) { state.cars.splice(i, 1); surplus -= 1; }
+    if (state.cars[i].police && !state.cars[i].patrol && !state.cars[i].roadblock) { state.cars.splice(i, 1); surplus -= 1; }
   }
 }
 
@@ -60,7 +65,10 @@ export function updatePoliceCar(car, dt, state) {
   while (diff < -Math.PI) diff += Math.PI * 2;
   car.angle += Math.max(-2.4 * dt, Math.min(2.4 * dt, diff));
   // At wanted 5 the VPD drives harder and shoots farther and faster.
-  const wantSpeed = Math.min(WANTED.chaseSpeed + (state.player.wanted >= 5 ? 60 : 0), 380 + state.player.wanted * 30);
+  // LOCKDOWN (round 6): at five stars every chaser gets another +40 on top,
+  // so the heat at max wanted is visibly faster than at four.
+  const lockdownBoost = state.player.wanted >= 5 ? 40 : 0;
+  const wantSpeed = Math.min(WANTED.chaseSpeed + (state.player.wanted >= 5 ? 60 : 0) + lockdownBoost, 380 + state.player.wanted * 30 + lockdownBoost);
   car.speed += (wantSpeed - car.speed) * dt * 0.8;
   car.x += Math.cos(car.angle) * car.speed * dt;
   car.y += Math.sin(car.angle) * car.speed * dt;
@@ -93,7 +101,8 @@ export function updatePoliceCar(car, dt, state) {
 export function nearestPoliceDistance(state) {
   let best = Infinity;
   for (const c of state.cars) {
-    if (!c.police || c.patrol) continue;
+    // Parked roadblock cars do not count as "police in sight" for cooling off.
+    if (!c.police || c.patrol || c.roadblock) continue;
     best = Math.min(best, Math.hypot(c.x - state.player.x, c.y - state.player.y));
   }
   return best;

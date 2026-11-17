@@ -104,6 +104,11 @@ export function drawPortside(ctx, state) {
   const port = state.city.portside;
   if (!port) return;
   const t = state.time;
+  // Round 6: fog rolls over the docks first — the yard disappears into grey.
+  if (state.weather && state.weather.kind === 'fog') {
+    ctx.fillStyle = 'rgba(180,190,210,0.10)';
+    ctx.fillRect(PORTSIDE.x, PORTSIDE.y, PORTSIDE.w, PORTSIDE.h);
+  }
   // Concrete quay strip along the river edge.
   ctx.fillStyle = '#3a3f5e';
   ctx.fillRect(2900, PORTSIDE.y, 60, PORTSIDE.h);

@@ -28,13 +28,14 @@ const REQUIRED_MODULES = [
   'game/src/missions3.js', 'game/src/player.js', 'game/src/police.js',
   'game/src/radio.js', 'game/src/random.js', 'game/src/render.js',
   'game/src/shops.js', 'game/src/shots.js', 'game/src/traffic.js',
+  'game/src/wanted.js', 'game/src/weather.js', 'game/src/side.js',
   'game/src/weapons.js', 'game/src/world.js',
 ];
 for (const rel of REQUIRED_MODULES) {
   if (!existsSync(join(here, rel))) throw new Error('missing required module: ' + rel);
 }
 const mainJs = readFileSync(join(here, 'game/src/main.js'), 'utf8');
-for (const mod of ['./district.js', './daynight.js', './garage.js', './weapons.js', './missions2.js', './coast.js', './missions3.js', './radio.js', './shops.js']) {
+for (const mod of ['./district.js', './daynight.js', './garage.js', './weapons.js', './missions2.js', './coast.js', './missions3.js', './radio.js', './shops.js', './weather.js', './wanted.js', './side.js']) {
   if (!mainJs.includes(mod)) throw new Error('game/src/main.js does not import ' + mod);
 }
 

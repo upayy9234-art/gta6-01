@@ -54,7 +54,7 @@ export function shadowStretch(t) {
   return 1 + goldenFactor(t) * 2.4;
 }
 
-export function skyState(t) {
+export function skyState(t, weather) {
   const light = daylight(t);
   const phase = dayPhase(t);
   const golden = goldenFactor(t);
@@ -63,17 +63,24 @@ export function skyState(t) {
   else if (phase === 'golden') horizon = '#ff7a3d';
   else if (phase === 'dusk') horizon = '#b34a6e';
   else if (phase === 'night') horizon = '#0a1030';
+  // Round 6 weather: rain and storm drag the sky darker and wash the golden
+  // hour out; fog dulls it a little. The second argument is the weather
+  // state ({ kind }), and it is optional — callers without weather get the
+  // plain sky.
+  const kind = weather ? weather.kind : 'clear';
+  const weatherDark = kind === 'storm' ? 0.22 : kind === 'rain' ? 0.12 : kind === 'fog' ? 0.06 : 0;
+  const goldenCut = kind === 'storm' ? 0.25 : kind === 'rain' ? 0.4 : kind === 'fog' ? 0.7 : 1;
   return {
     light,
     phase,
-    golden,
-    nightAlpha: 0.30 * (1 - light),
+    golden: golden * goldenCut,
+    nightAlpha: 0.30 * (1 - light) + weatherDark,
     // Warm wash over the whole frame while the sun is low.
-    warmAlpha: 0.12 * golden,
-    lampGlow: 0.16 + 0.14 * (1 - light) + 0.05 * golden,
+    warmAlpha: 0.12 * golden * goldenCut,
+    lampGlow: 0.16 + 0.14 * (1 - light) + 0.05 * golden + weatherDark * 0.4,
     lampRadius: 26 + 18 * (1 - light),
     neonBoost: 0.55 + 0.45 * (1 - light) + 0.25 * golden,
-    starAlpha: Math.max(0, 0.9 - light * 1.6),
+    starAlpha: kind === 'clear' ? Math.max(0, 0.9 - light * 1.6) : 0,
     horizon,
   };
 }
@@ -112,7 +119,7 @@ export function updateDayNight(state) {
 }
 
 export function drawStars(ctx, state, w, h) {
-  const sky = skyState(state.timeOfDay);
+  const sky = skyState(state.timeOfDay, state.weather);
   if (sky.starAlpha <= 0.02) return;
   const stars = starPositions(90, w, h);
   ctx.save();
@@ -126,7 +133,7 @@ export function drawStars(ctx, state, w, h) {
 }
 
 export function drawMoon(ctx, state, width) {
-  const sky = skyState(state.timeOfDay);
+  const sky = skyState(state.timeOfDay, state.weather);
   if (sky.starAlpha <= 0.05) return;
   const mx = width - 190, my = 96;
   ctx.save();
@@ -157,14 +164,18 @@ export function drawSun(ctx, state, width) {
   const light = daylight(state.timeOfDay);
   if (light <= 0.02) return;
   const pos = sunPosition(state.timeOfDay, width);
+  // Rain and storm dim the sun itself, not just the wash around it.
+  const kind = state.weather ? state.weather.kind : 'clear';
+  const sunDim = kind === 'storm' ? 0.45 : kind === 'rain' ? 0.65 : 1;
   const golden = goldenFactor(state.timeOfDay);
   ctx.save();
   // Golden-hour sun: bigger, lower, orange — it hangs over the harbour.
+  // Round 6: storms dim it to a pale disc behind the cloud.
   const r = 26 + golden * 22;
-  ctx.globalAlpha = (0.25 + golden * 0.25) * light;
+  ctx.globalAlpha = (0.25 + golden * 0.25) * light * sunDim;
   ctx.fillStyle = golden > 0.3 ? '#ff8a3d' : '#ffd76a';
   ctx.beginPath(); ctx.arc(pos.x, Math.min(190, pos.y + golden * 60), 44 + golden * 26, 0, Math.PI * 2); ctx.fill();
-  ctx.globalAlpha = 0.9 * light;
+  ctx.globalAlpha = 0.9 * light * sunDim;
   ctx.fillStyle = golden > 0.3 ? '#ffab5e' : '#fff3c0';
   ctx.beginPath(); ctx.arc(pos.x, Math.min(190, pos.y + golden * 60), r, 0, Math.PI * 2); ctx.fill();
   ctx.restore();

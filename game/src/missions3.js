@@ -102,13 +102,20 @@ export function updateDay3Missions(state, dt) {
   if (d3.step >= steps.length) completeDay3Mission(state);
 }
 
+// Bad-weather pay (round 6): same bonus as missions.js — the heist crew
+// respects a job finished in rain or storm. Cash rewards never change.
+export function day3WeatherBonus(state) {
+  const kind = state.weather ? state.weather.kind : 'clear';
+  return kind === 'storm' ? 100 : kind === 'rain' ? 50 : 0;
+}
+
 export function completeDay3Mission(state) {
   const m = state.missions;
   const reward = MISSION_REWARD[m.index] ?? 0;
   state.player.money += reward;
   m.banner = DAY3_COMPLETE[m.index] ?? 'Mission complete!';
   state.audio?.mission();
-  state.score += 1000 * (m.index + 1);
+  state.score += 1000 * (m.index + 1) + day3WeatherBonus(state);
   m.index += 1;
   m.stage = 'go'; m.targetCar = null; m.timer = 0;
   state.day3 = createDay3();

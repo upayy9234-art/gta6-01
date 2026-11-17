@@ -248,6 +248,16 @@ export function drawGarage(ctx, state) {
   if (!g.carOfTheDay) g.carOfTheDay = carOfTheDay(state.random);
   ctx.fillStyle = '#9aa3c7'; ctx.font = '13px system-ui, sans-serif';
   ctx.fillText(g.carOfTheDay, x + 28, rowY);
+  // Round 6: the garage keeper warns about the weather outside — slick roads
+  // punish a heavy foot, and a second heli is up there when the heat is maxed.
+  const kind = state.weather ? state.weather.kind : 'clear';
+  if (kind === 'rain' || kind === 'storm') {
+    ctx.fillStyle = '#7cc7ff'; ctx.font = 'bold 13px system-ui, sans-serif';
+    ctx.fillText(kind === 'storm' ? '⛈️ Storm outside — grip is down, mind the slick roads.' : '🌧️ Rain outside — grip is down, mind the slick roads.', x + 28, rowY + 22);
+  } else if (kind === 'fog') {
+    ctx.fillStyle = '#7cc7ff'; ctx.font = 'bold 13px system-ui, sans-serif';
+    ctx.fillText('🌫️ Fog outside — keep your eyes on the road, not the sky.', x + 28, rowY + 22);
+  }
   ctx.fillStyle = '#f2f4ff'; ctx.font = 'bold 14px system-ui, sans-serif';
   ctx.textAlign = 'center';
   ctx.fillText('Press G to close the garage', x + w / 2, y + h - 30);

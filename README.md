@@ -47,6 +47,25 @@ and take the Harbor Vault heist finale.
   heat rises. At wanted 4 a **police helicopter** joins the hunt, hovering over you with a
   sweeping spotlight and firing from the air at wanted 5. Lay low and out of sight to cool
   off — and hiding with no heat slowly restores your health.
+- **VPD roadblocks + lockdown (round 6)** — at wanted 3+ the VPD seals roads ahead of you:
+  two interceptors parked across the carriageway, traffic cones, and a **spike strip** that
+  shreds your tyres (damage + speed loss) if you drive over it. Smash the cars or slip
+  around the block to get through; roadblocks stand down when the heat drops below 3. At
+  wanted 5 the **VPD LOCKDOWN** fires: chasers drive faster and a **second helicopter** joins
+  the hunt from the opposite side. The HUD warns “⚠ ROADBLOCK AHEAD — 320m” and the minimap
+  marks every sealed road in red.
+- **Dynamic weather (round 6)** — a seeded state machine drifts between CLEAR, RAIN, FOG and
+  STORM every ~90–150 game seconds. Rain and storm make the roads slick (car grip drops, so
+  braking distances grow and traffic slows too), fog cuts visibility with drifting banks of
+  grey, storms throw lightning flashes and thunder. The sky, sun, lamps and ocean all read
+  the weather — a rainy golden hour looks different from a clear one. Finishing a mission in
+  rain or storm pays a small score bonus. The HUD shows the current weather and icon.
+- **Taxi fares + hidden postcards (round 6)** — side money between missions. Two or three
+  Virelians wait at the roadside with a gold “$” over their heads: press **E** near one to pick
+  them up, then drop them off before the timer runs out for **$150–$400** by distance. Ten
+  **postcards** hide at fixed spots around the city (Palm Boulevard, Harbor Park, the East Pier,
+  the Neon Strip, Portside docks…): walk or drive over one for **$150** and score. The HUD
+  tracks “POSTCARDS n/10” and the fare timer; both save with your game.
 - **Neon Strip casino district** — a purple-and-gold casino landmark in the north-west of the
   city, with its own neon sign, gold trim and a gold marker on the minimap.
 - **Combat and weapons** — shooting on foot, ramming in cars, car explosions, police return fire.
@@ -75,7 +94,7 @@ and take the Harbor Vault heist finale.
 | WASD / arrows | Move on foot / drive |
 | Mouse | Aim (on foot) |
 | Click / Space | Shoot (on foot) / handbrake (in car) |
-| E | Enter / exit car · open a shop when one is near · close a shop panel |
+| E | Enter / exit car · open a shop when one is near · close a shop panel · pick up a waiting taxi passenger |
 | H | Honk the horn (in a car) |
 | G | Open / close the Virelia Motors garage (near the garage) |
 | R | Change the radio station |
@@ -104,9 +123,9 @@ fixed scene in the game:
 | File | Scene |
 |---|---|
 | `screenshots/1-start.jpg` | Title screen — “12 MISSIONS · 3 DAYS · A CITY THAT REMEMBERS” over the living golden-hour city: traffic, patrol cars, pedestrians, palms and the beach behind the logo. |
-| `screenshots/2-play.jpg` | Golden-hour street action — Kai driving east past Virelia Motors with the Street Sweeper SMG, dense traffic, pedestrians, named signs and the radio ticker on screen. |
-| `screenshots/3-chase.jpg` | Police chase — VPD patrol cars and the police helicopter closing in at wanted level 5, Kai in a nitro-fitted car with engine Lv2 and the Long Pier Rifle. |
-| `screenshots/4-win.jpg` | Victory screen — all twelve jobs done across three days, the Harbor Vault heist and the final score banked, garage fully upgraded and every gun owned. |
+| `screenshots/2-play.jpg` | Golden-hour street action — Kai driving east past Virelia Motors with the Street Sweeper SMG, dense traffic, pedestrians, named signs and the radio ticker on screen. Round 6: a taxi passenger waits at the kerb (gold “$”) and the Virelia Motors postcard sits on the garage doorstep. |
+| `screenshots/3-chase.jpg` | Police chase — VPD patrol cars and the police helicopter closing in at wanted level 5, Kai in a nitro-fitted car with engine Lv2 and the Long Pier Rifle. Round 6: it is raining — slick roads, rain streaks — and the wanted-5 lockdown seals a road ahead with a roadblock while a second helicopter joins the hunt. |
+| `screenshots/4-win.jpg` | Victory screen — all twelve jobs done across three days, the Harbor Vault heist and the final score banked, garage fully upgraded and every gun owned. Round 6: all 10 postcards collected, 10/10 on the HUD. |
 
 Every shot is reproducible: open the game with `?shot=start|play|chase|win&seed=1` and the same
 seeded scene renders every time, so each screenshot above matches exactly what you see in the browser.
@@ -121,7 +140,10 @@ Vanilla ES modules, canvas 2D. Source is split by responsibility under `game/src
 `radio.js` (stations + ticker), `shops.js` (Harbor Arms, Pier 9 Diner, Neon Mart),
 `weapons.js` (four guns, ammo, pickups), `garage.js` (Virelia Motors upgrades + paint),
 `player.js`, `traffic.js`, `police.js`, `heli.js` (police helicopter), `render.js`, `hud.js`,
-`audio.js`, `input.js`, `shots.js`, `main.js`.
+`audio.js`, `input.js`, `shots.js`, `main.js`, plus the round-6 systems:
+`weather.js` (dynamic CLEAR/RAIN/FOG/STORM + grip + lightning),
+`wanted.js` (VPD roadblocks, spike strips, lockdown),
+`side.js` (taxi fares + hidden postcards).
 
 Built by an AI agent for make.fun's “Make GTA 6” bounty, $1,666 in USDC.
 All names, characters, city, story, art and music are original.

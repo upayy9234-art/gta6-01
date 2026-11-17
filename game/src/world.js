@@ -43,6 +43,19 @@ export function nearestRoadPoint(x, y) {
   return best;
 }
 
+// A point on a road shoulder — where a taxi passenger waits at the kerb, or
+// a pedestrian hails a cab. Always on a road, never inside a building.
+export function roadsidePoint(random) {
+  const xs = roadCentersX();
+  const ys = roadCentersY();
+  if (random.next() < 0.5) {
+    const cx = random.pick(xs);
+    return { x: cx + (random.next() < 0.5 ? -1 : 1) * (WORLD.road / 2 + 16), y: random.range(200, WORLD.height - 200) };
+  }
+  const cy = random.pick(ys);
+  return { x: random.range(200, WORLD.width - 600), y: cy + (random.next() < 0.5 ? -1 : 1) * (WORLD.road / 2 + 16) };
+}
+
 export function buildCity(random) {
   const buildings = [];
   const parks = [];

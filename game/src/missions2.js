@@ -3,6 +3,9 @@
 // stand: survive the full fury of the VPD, put six of their cars down, and run
 // for the East Pier. Missions 1–4 live in missions.js; missions 7–12 (Day 3)
 // live in missions3.js; this module plugs in when state.missions.index is 4–5.
+// Round 6: mission 6's last stand is where the roadblocks and the lockdown
+// bite hardest — six VPD cars down while the roads are sealed and a second
+// heli circles overhead.
 import { MISSION_REWARD, MISSIONS } from './config.js';
 import { PORTSIDE, nextCrate } from './district.js';
 
@@ -122,13 +125,20 @@ export function countPoliceKill(state) {
   state.bannerTimer = 3;
 }
 
+// Bad-weather pay (round 6): same bonus as missions.js — a job finished in
+// rain or storm scores a little higher. Cash rewards never change.
+export function extraWeatherBonus(state) {
+  const kind = state.weather ? state.weather.kind : 'clear';
+  return kind === 'storm' ? 100 : kind === 'rain' ? 50 : 0;
+}
+
 export function completeExtraMission(state, message) {
   const m = state.missions;
   const reward = MISSION_REWARD[m.index] ?? 0;
   state.player.money += reward;
   m.banner = message;
   state.audio?.mission();
-  state.score += 1000 * (m.index + 1);
+  state.score += 1000 * (m.index + 1) + extraWeatherBonus(state);
   m.index += 1;
   m.stage = 'go'; m.targetCar = null; m.timer = 0;
   state.extra = createExtraMissions();

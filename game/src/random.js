@@ -30,6 +30,15 @@ export function createRandom(seed) {
     angle() { return this.next() * Math.PI * 2; },
     // Roughly bell-shaped pick in [min, max] (average of two uniforms).
     bell(min, max) { return (this.next() + this.next()) / 2 * (max - min) + min; },
+    // A random element that satisfies a predicate, or null when none does
+    // after a few tries — handy for picking a far-away fare destination.
+    pickWhere(list, pred, tries = 10) {
+      for (let i = 0; i < tries; i += 1) {
+        const item = list[Math.floor(this.next() * list.length)];
+        if (pred(item)) return item;
+      }
+      return null;
+    },
   };
 }
 

@@ -14,6 +14,9 @@ import { drawWeaponPickups } from './weapons.js';
 import { drawGarage, GARAGE_SPOT } from './garage.js';
 import { drawShopPanel } from './shops.js';
 import { heliSpotlightAlpha } from './heli.js';
+import { drawRoadblocks } from './wanted.js';
+import { drawSideMarkers } from './side.js';
+import { rainDrops, fogBlobs, isWet } from './weather.js';
 
 export const SCREEN_TITLE = 'title';
 export const SCREEN_PLAY = 'play';
@@ -49,7 +52,8 @@ export function createRenderer(canvas) {
       // in screen space so the sky always reads, day or night. Golden hour
       // adds a warm sunset gradient over the whole frame instead of the
       // night tint — the first impression must read sunset, not navy dark.
-      const sky = skyState(state.timeOfDay);
+      // Round 6: the sky reads the weather too, so rain dulls the sunset.
+      const sky = skyState(state.timeOfDay, state.weather);
       if (sky.golden > 0.02) {
         const g = ctx.createLinearGradient(0, 0, 0, VIEW.height);
         g.addColorStop(0, 'rgba(255,150,70,' + (0.30 * sky.golden).toFixed(3) + ')');
@@ -66,6 +70,10 @@ export function createRenderer(canvas) {
         ctx.fillStyle = 'rgba(10,12,40,' + sky.nightAlpha.toFixed(3) + ')';
         ctx.fillRect(0, 0, VIEW.width, VIEW.height);
       }
+      // Round 6 weather, painted in screen space over the world: rain streaks
+      // slanting down, fog blobs drifting across the frame, and a lightning
+      // flash that whites the whole screen for a beat in a storm.
+      drawWeatherOverlay(ctx, state);
       drawStars(ctx, state, VIEW.width, VIEW.height);
       drawMoon(ctx, state, VIEW.width);
       drawSun(ctx, state, VIEW.width);
@@ -79,6 +87,38 @@ export function createRenderer(canvas) {
       if (state.shops && state.shops.open) drawShopPanel(ctx, state);
     },
   };
+}
+
+function drawWeatherOverlay(ctx, state) {
+  const w = state.weather;
+  if (!w) return;
+  if (isWet(w.kind)) {
+    // Rain: 110 deterministic streaks slanting down with the harbour wind.
+    ctx.strokeStyle = 'rgba(180,200,235,0.45)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (const drop of rainDrops(state.time, 110, VIEW.width, VIEW.height)) {
+      ctx.moveTo(drop.x, drop.y);
+      ctx.lineTo(drop.x - 6, drop.y + drop.len);
+    }
+    ctx.stroke();
+    // Wet roads shine: a faint sheen over the whole frame.
+    ctx.fillStyle = 'rgba(140,170,220,0.05)';
+    ctx.fillRect(0, 0, VIEW.width, VIEW.height);
+  }
+  if (w.kind === 'fog') {
+    for (const blob of fogBlobs(state.time, 7, VIEW.width, VIEW.height)) {
+      const g = ctx.createRadialGradient(blob.x, blob.y, 10, blob.x, blob.y, blob.r);
+      g.addColorStop(0, 'rgba(190,200,220,0.16)');
+      g.addColorStop(1, 'rgba(190,200,220,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(blob.x - blob.r, blob.y - blob.r, blob.r * 2, blob.r * 2);
+    }
+  }
+  if (w.flash > 0.02) {
+    ctx.fillStyle = 'rgba(240,244,255,' + (w.flash * 0.55).toFixed(3) + ')';
+    ctx.fillRect(0, 0, VIEW.width, VIEW.height);
+  }
 }
 
 function drawWorld(ctx, state) {
@@ -96,8 +136,9 @@ function drawWorld(ctx, state) {
   // Bridges.
   ctx.fillStyle = PALETTE.bridge;
   ctx.fillRect(2900, 620, 500, 96); ctx.fillRect(2900, 1680, 500, 96);
-  // Roads.
-  ctx.fillStyle = golden > 0.3 ? '#38324e' : PALETTE.road;
+  // Roads. Wet roads (round 6) read lighter and glossier than dry asphalt.
+  const wet = state.weather ? isWet(state.weather.kind) : false;
+  ctx.fillStyle = golden > 0.3 ? '#38324e' : wet ? '#2d3250' : PALETTE.road;
   for (let x = 388; x < WORLD.width; x += 436) ctx.fillRect(x - WORLD.road / 2, y0, WORLD.road, vh);
   for (let y = 388; y < WORLD.height; y += 436) ctx.fillRect(x0, y - WORLD.road / 2, vw, WORLD.road);
   // Road centre dashes.
@@ -157,7 +198,7 @@ function drawWorld(ctx, state) {
       if ((i * 7 + j * 13 + b.windows) % 3 === 0) ctx.fillRect(b.x + 8 + i * 34, b.y + 10 + j * 34, 12, 16);
     }
     if (b.neon) {
-      const sky = skyState(state.timeOfDay);
+      const sky = skyState(state.timeOfDay, state.weather);
       ctx.fillStyle = b.neon; ctx.globalAlpha = Math.min(1, 0.55 + sky.neonBoost * 0.5);
       ctx.fillRect(b.x + b.w / 2 - 26, b.y - 4, 52, 8);
       ctx.globalAlpha = 1;
@@ -177,7 +218,7 @@ function drawWorld(ctx, state) {
   // District name labels across the map.
   drawDistrictLabels(ctx, state);
   // Street lamps glow — wider and brighter at night, per the day/night sky.
-  const sky = skyState(state.timeOfDay);
+  const sky = skyState(state.timeOfDay, state.weather);
   for (const lamp of state.city.lamps) {
     if (Math.abs(lamp.x - cam.x) > vw / 2 || Math.abs(lamp.y - cam.y) > vh / 2) continue;
     ctx.fillStyle = 'rgba(255,214,106,' + sky.lampGlow.toFixed(3) + ')';
@@ -249,6 +290,11 @@ function drawCar(ctx, car, state) {
 function drawEntities(ctx, state) {
   // Weapon pickups first, so their rings sit under cars and the player.
   drawWeaponPickups(ctx, state);
+  // Round 6: VPD roadblocks (cones, spike strip, parked interceptors) and the
+  // side-activity markers (waiting taxi fares, the fare destination, hidden
+  // postcards) all live in world space with the rest of the city.
+  drawRoadblocks(ctx, state);
+  drawSideMarkers(ctx, state);
   // Pedestrians.
   for (const ped of state.peds) {
     ctx.save(); ctx.translate(ped.x, ped.y);
@@ -357,9 +403,10 @@ function drawTitle(ctx, state, best) {
   ctx.fillText('Kai Mercer. One last job for fixer Mara Voss — then the Harbor Vault heist.', VIEW.width / 2, 268);
   ctx.fillText('Steal cars, outrun the VPD, rob the Neon Strip casino, raid the Portside docks,', VIEW.width / 2, 292);
   ctx.fillText('eat at Pier 9, tune your ride at Virelia Motors, and take the final score.', VIEW.width / 2, 316);
+  ctx.fillText('Dodge VPD roadblocks, drive through rain and storms, pick up taxi fares — and find all 10 postcards.', VIEW.width / 2, 340);
   ctx.fillStyle = PALETTE.muted; ctx.font = '15px system-ui, sans-serif';
-  ctx.fillText('WASD move / drive  ·  Mouse aim  ·  Click or Space shoot  ·  E enter car / shop', VIEW.width / 2, 360);
-  ctx.fillText('Shift run / nitro  ·  H honk  ·  G garage  ·  R radio  ·  1–4 switch weapon  ·  Esc pause  ·  M sound', VIEW.width / 2, 384);
+  ctx.fillText('WASD move / drive  ·  Mouse aim  ·  Click or Space shoot  ·  E enter car / shop', VIEW.width / 2, 376);
+  ctx.fillText('Shift run / nitro  ·  H honk  ·  G garage  ·  R radio  ·  1–4 switch weapon  ·  Esc pause  ·  M sound', VIEW.width / 2, 400);
   const save = readSave();
   const pulse = 0.7 + Math.sin(state.time * 3) * 0.3;
   ctx.globalAlpha = pulse;

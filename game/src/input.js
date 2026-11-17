@@ -3,6 +3,8 @@
 // (and fires the nitro while driving), M toggles sound, R changes the radio
 // station, Esc/P pauses, G opens the garage, digits 1–9 buy in the garage or
 // shop or switch between owned guns (1–4).
+// Round 6: E has a priority order — close an open shop panel first, then pick
+// up a waiting taxi passenger (see side.js), then enter or exit a car.
 export const ACTION_CONFIRM = 1;
 export const ACTION_PAUSE = 2;
 export const ACTION_ENTER_CAR = 4;

@@ -60,6 +60,12 @@ export function createAudio() {
     nitro() { noise(0.35, 0.06); tone(220, 0.3, 'sawtooth', 0.04); tone(440, 0.28, 'sawtooth', 0.03, 0.1); },
     // Radio dial click + a short station-ident jingle when the station changes.
     tune() { noise(0.06, 0.08); tone(1046, 0.1, 'triangle', 0.09, 0.05); tone(1318, 0.14, 'triangle', 0.09, 0.15); },
+    // Thunder (round 6): a long low rumble under the storm lightning flash.
+    thunder() { noise(1.4, 0.16); tone(48, 1.2, 'sawtooth', 0.12); tone(38, 1.5, 'sine', 0.1, 0.15); },
+    // Taxi fare picked up: a friendly two-note chime, like a cab meter starting.
+    taxiPickup() { tone(880, 0.1, 'triangle', 0.11); tone(1174, 0.16, 'triangle', 0.11, 0.1); },
+    // Fare paid: a little cash-register arpeggio when the passenger pays up.
+    taxiPaid() { [988, 1174, 1318, 1568].forEach((f, i) => tone(f, 0.14, 'triangle', 0.12, i * 0.09)); },
     win() { [523, 659, 784, 1046, 1318].forEach((f, i) => tone(f, 0.3, 'triangle', 0.14, i * 0.13)); },
     update(dt, driving, station = 0) {
       if (muted) return;

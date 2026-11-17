@@ -1,8 +1,9 @@
 // Player state: on-foot movement with mouse aim, shooting, entering/exiting cars,
 // health, money and the wanted level. Driving physics live in traffic.js.
 // Shops heal Kai (see shops.js); the garage tunes his cars (see garage.js).
-import { PLAYER, WORLD } from './config.js';
+import { PLAYER, ROADBLOCK, WORLD } from './config.js';
 import { collideBuildings, isInWater, isOnRoad } from './world.js';
+import { burst } from './traffic.js';
 
 export function createPlayer(x, y) {
   return {
@@ -83,3 +84,18 @@ export function playerShoot(player, state) {
 }
 
 export function isPlayerOnRoad(player) { return isOnRoad(player.x, player.y); }
+
+// Spike strip hit (round 6, VPD roadblocks): the tyres go, the car takes a
+// chunk of damage and loses half its speed, then stays sluggish for a moment
+// while Kai wrestles the shredded wheels. Called from wanted.js.
+export function carHitSpikeStrip(state, car) {
+  if (!car) return;
+  car.health = Math.max(0, car.health - ROADBLOCK.SPIKE_DAMAGE);
+  car.speed *= 0.45;
+  car.spikeSlow = 1.6;
+  burst(state, car.x, car.y, '#c9d2ff', 14);
+  burst(state, car.x, car.y, '#ff7a3d', 8);
+  state.audio?.crash(0.8);
+  state.bannerText = 'Spike strip! Tyres shredded — the car is barely holding together.';
+  state.bannerTimer = 3;
+}

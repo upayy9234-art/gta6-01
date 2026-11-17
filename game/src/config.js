@@ -23,6 +23,33 @@ export const CAR = {
   maxSpeed: 560, turnRate: 2.6, drag: 0.55, grip: 6.5, health: 160,
 };
 export const WANTED = { decay: 0.045, perCrime: 1, max: 5, chaseSpeed: 500 };
+// VPD roadblocks (round 6): sealed roads once the heat hits 3 stars.
+export const ROADBLOCK = {
+  MIN_WANTED: 3, MAX_ACTIVE: 2, AHEAD: 480, WARN_DIST: 600,
+  SPAWN_GAP: 6, STRIP_RADIUS: 46, SPIKE_DAMAGE: 12,
+};
+// Dynamic weather (round 6): spells last 90–150 game seconds.
+export const WEATHER = { MIN_SPELL: 90, MAX_SPELL: 150 };
+// Taxi fares + postcards (round 6): side money between missions.
+export const TAXI = {
+  MAX_WAITING: 3, PICKUP_DIST: 80, DROPOFF_DIST: 80,
+  MIN_TRIP: 500, MAX_TRIP: 1400, SPEED: 200, BASE_TIME: 25,
+  MIN_PAY: 150, MAX_PAY: 400, SCORE: 100, RESPAWN_DELAY: 8,
+  POSTCARD_PAY: 150, POSTCARD_SCORE: 200,
+};
+// Ten hidden postcards at fixed, reachable spots around Virelia.
+export const POSTCARD_SPOTS = [
+  { x: 2930, y: 500, label: 'PALM BOULEVARD' },
+  { x: 1914, y: 1478, label: 'HARBOR PARK' },
+  { x: 3120, y: 668, label: 'EAST PIER' },
+  { x: 1042, y: 800, label: 'NEON STRIP' },
+  { x: 700, y: 388, label: 'VIRELIA MOTORS' },
+  { x: 2640, y: 2090, label: 'PORTSIDE DOCKS' },
+  { x: 560, y: 560, label: 'OLD TOWN' },
+  { x: 2568, y: 388, label: 'UPTOWN' },
+  { x: 824, y: 1696, label: 'HARBOR VAULT' },
+  { x: 1300, y: 860, label: 'NEON MART' },
+];
 export const MISSION_REWARD = [400, 900, 2200, 3000, 4200, 6000, 800, 1500, 2600, 1800, 5000, 10000];
 export const GARAGE = { x: 700, y: 388, label: 'VIRELIA MOTORS — GARAGE' };
 export const WEAPON_SHOP = { x: 500, y: 388, label: 'HARBOR ARMS — WEAPONS' };

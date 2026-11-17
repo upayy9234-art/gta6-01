@@ -228,6 +228,64 @@ check('game starts on Space', (await evalJs('window.__neonHarbor().screen')) ===
 check('no console errors during play', consoleErrors.length === 0, consoleErrors.join(' | ').slice(0, 400));
 check('no failed requests', failedRequests.length === 0, failedRequests.join(', '));
 
+// ============ 7b. ROUND 6: roadblocks, weather grip, taxi fare, postcard ============
+{
+  const step = async (seconds = 0.6) => {
+    await evalJs(`(() => { const s = window.__neonHarbor(); const input = { up:()=>false, down:()=>false, left:()=>false, right:()=>false, moveX:()=>0, run:()=>false, shooting:()=>false, mouse:()=>({x:640,y:360}) }; for (let i=0;i<${Math.round(seconds * 60)};i++) s.stepWorld(1/60, input); })()`);
+  };
+  // Roadblock spawns at wanted 3 and stands down below 3.
+  await evalJs(`(() => { const s = window.__neonHarbor(); s.player.wanted = 3; s.player.x = 388; s.player.y = 388; })()`);
+  await step(0.5);
+  const blocks = await evalJs('window.__neonHarbor().roadblocks.list.length');
+  check('round 6: roadblock spawns at wanted 3', blocks >= 1, `blocks=${blocks}`);
+  const blockCars = await evalJs('window.__neonHarbor().cars.filter(c=>c.roadblock).length');
+  check('round 6: roadblock parks 2 police cars', blockCars === 2, `cars=${blockCars}`);
+  await evalJs(`(() => { const s = window.__neonHarbor(); s.player.wanted = 2; })()`);
+  await step(0.5);
+  check('round 6: roadblocks stand down below wanted 3', (await evalJs('window.__neonHarbor().roadblocks.list.length')) === 0);
+  // Lockdown: wanted 5 sends a second helicopter up.
+  await evalJs(`(() => { const s = window.__neonHarbor(); s.player.wanted = 5; })()`);
+  await step(1.2);
+  const helis = await evalJs('window.__neonHarbor().helis.length');
+  check('round 6: lockdown — second heli at wanted 5', helis === 2, `helis=${helis}`);
+  await evalJs(`(() => { const s = window.__neonHarbor(); s.player.wanted = 0; })()`);
+  // Rain grip: same car, same seed, same 0.5 s of full throttle on an empty road
+  // — before the speed cap hides the difference, rain accelerates slower.
+  // Twelve dummy NPC cars parked far away keep the traffic top-up quiet so
+  // nothing spawns into the test stretch mid-run.
+  const driveSpeed = async (weather) => {
+    await evalJs(`(() => { const s = window.__neonHarbor(); s.player.wanted = 0; s.roadblocks.list = []; s.cars = s.cars.filter(c=>c===s.player.inCar || c.dummy); let i = 0; while (s.cars.filter(c=>c.dummy).length < 12) { s.cars.push({ x: 2800, y: 1200 + i * 100, angle: 0, speed: 0, npc: true, police: false, dummy: true, honk: 0, model: { speed: 1 } }); i += 1; } const car = s.player.inCar; car.x = 388; car.y = 388; car.angle = 0; car.speed = 0; s.player.x = 388; s.player.y = 388; })()`);
+    return evalJs(`(() => { const s = window.__neonHarbor(); const car = s.player.inCar; const input = { up:()=>true, down:()=>false, left:()=>false, right:()=>false, moveX:()=>0, run:()=>false, shooting:()=>false, mouse:()=>({x:640,y:360}) }; for (let i=0;i<30;i++) s.stepWorld(1/60, input); return Math.round(car.speed); })()`);
+  };
+  await evalJs(`(() => { const s = window.__neonHarbor(); s.player.x = 388; s.player.y = 388; })()`);
+  // Put Kai in a car first (steal the parked one next to the garage door).
+  await evalJs(`(() => { const s = window.__neonHarbor(); const car = s.cars.find(c=>!c.police && !c.npc && Math.abs(c.x-560)<200); s.player.inCar = car; s.player.x = car.x; s.player.y = car.y; })()`);
+  await evalJs(`(() => { const s = window.__neonHarbor(); s.weather.kind = 'clear'; s.weather.gripMul = 1; s.weather.timer = 9999; })()`);
+  const drySpeed = await driveSpeed('clear');
+  await evalJs(`(() => { const s = window.__neonHarbor(); s.weather.kind = 'rain'; s.weather.gripMul = 0.82; s.weather.timer = 9999; })()`);
+  const wetSpeed = await driveSpeed('rain');
+  check('round 6: rain grip — slower than dry over the same 0.5 s', wetSpeed < drySpeed - 15, `dry=${drySpeed} wet=${wetSpeed}`);
+  check('round 6: weather label names the rain', (await evalJs(`(() => { const s = window.__neonHarbor(); return s.weather.kind; })()`)) === 'rain');
+  await evalJs(`(() => { const s = window.__neonHarbor(); s.weather.kind = 'clear'; s.weather.gripMul = 1; })()`);
+  // Taxi fare: teleport to a waiting passenger, press E, drive to the drop-off.
+  await evalJs(`(() => { const s = window.__neonHarbor(); const f = s.side.fares[0]; s.player.x = f.x; s.player.y = f.y; s.player.inCar = null; s.player.money = 500; })()`);
+  await key('KeyE', 'e');
+  const fare = await evalJs('window.__neonHarbor().side.activeFare ? { pay: window.__neonHarbor().side.activeFare.pay, dest: window.__neonHarbor().side.activeFare.dest } : null');
+  check('round 6: E picks up a taxi fare', fare !== null && fare.pay >= 150, JSON.stringify(fare));
+  const moneyBefore = await evalJs('window.__neonHarbor().player.money');
+  await evalJs(`(() => { const s = window.__neonHarbor(); const f = s.side.activeFare; s.player.x = f.dest.x; s.player.y = f.dest.y; })()`);
+  await step(0.3);
+  const moneyAfter = await evalJs('window.__neonHarbor().player.money');
+  check('round 6: taxi dropoff pays', moneyAfter === moneyBefore + fare.pay, `money ${moneyBefore}→${moneyAfter} pay=$${fare.pay}`);
+  // Postcard: walk over the Palm Boulevard card (not visited by earlier tests).
+  const pcBefore = await evalJs('({ collected: window.__neonHarbor().side.collected, money: window.__neonHarbor().player.money })');
+  await evalJs(`(() => { const s = window.__neonHarbor(); s.player.x = 2930; s.player.y = 500; s.player.inCar = null; })()`);
+  await step(0.3);
+  const pcAfter = await evalJs('({ collected: window.__neonHarbor().side.collected, money: window.__neonHarbor().player.money })');
+  check('round 6: postcard on Palm Boulevard collects (+$150)', pcAfter.collected === pcBefore.collected + 1 && pcAfter.money === pcBefore.money + 150,
+    `${pcBefore.collected}→${pcAfter.collected}, $${pcBefore.money}→$${pcAfter.money}`);
+}
+
 // ============ 8. SCREENSHOTS (deterministic ?shot= modes, seed=1) ============
 // Wipe the play-test's save/best first: the shipped screenshots must show a
 // fresh game, not the test profile's CONTINUE line and best score.

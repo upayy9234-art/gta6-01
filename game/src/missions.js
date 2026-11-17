@@ -3,6 +3,8 @@
 // Progress saves. Jobs 1–4 live here; jobs 5–6 (Portside docks, the last stand)
 // live in missions2.js; jobs 7–12 (Day 3, the Harbor Vault heist finale) live
 // in missions3.js. The HUD always shows "MISSION n/12" plus the stage.
+// Round 6: finishing a job in rain or storm pays a small score bonus
+// (missionWeatherBonus) — the city notices hard work in bad weather.
 import { MISSIONS, MISSION_REWARD, WORLD } from './config.js';
 import { makeCar } from './traffic.js';
 import { updateExtraMissions, extraMissionWaypoint, extraMissionProgressText } from './missions2.js';
@@ -100,13 +102,20 @@ export function updateMissions(state, dt) {
   }
 }
 
+// Bad-weather pay (round 6): finishing a job in the rain or a storm is
+// harder work, so the score gets a small bonus. Cash rewards never change.
+export function missionWeatherBonus(state) {
+  const kind = state.weather ? state.weather.kind : 'clear';
+  return kind === 'storm' ? 100 : kind === 'rain' ? 50 : 0;
+}
+
 export function completeMission(state, message) {
   const m = state.missions;
   const reward = MISSION_REWARD[m.index] ?? 0;
   state.player.money += reward;
   m.banner = message;
   state.audio?.mission();
-  state.score += 1000 * (m.index + 1);
+  state.score += 1000 * (m.index + 1) + missionWeatherBonus(state);
   m.index += 1;
   m.stage = 'go'; m.targetCar = null; m.timer = 0;
   if (m.index >= MISSIONS.length) {
