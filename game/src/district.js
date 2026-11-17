@@ -3,7 +3,8 @@
 // gantry cranes loom over the quay, boats bob at the moorings, and three gold
 // crates wait here for mission 5 — "The Portside Job". The ordinary city
 // generator leaves this corner empty (see world.js) so the docks own it.
-import { WORLD } from './config.js';
+// Every district also gets a name label painted on the map (see DISTRICTS).
+import { DISTRICTS, WORLD } from './config.js';
 
 export const PORTSIDE = {
   x: 2380, y: 1830, w: 520, h: 520, label: 'PORTSIDE DOCKS',
@@ -51,7 +52,9 @@ export function buildPortside(city, random) {
   city.buildings.push({
     x: WAREHOUSE.x, y: WAREHOUSE.y, w: WAREHOUSE.w, h: WAREHOUSE.h,
     color: '#8a3b2e', neon: '#22e6ff', height: 2, windows: 12, warehouse: true,
+    sign: 'DOCKSIDE WAREHOUSE',
   });
+  city.signs.push({ x: WAREHOUSE.x + WAREHOUSE.w / 2, y: WAREHOUSE.y + 2, text: 'DOCKSIDE WAREHOUSE', color: '#22e6ff' });
   const portside = {
     cranes: [
       { x: 2460, y: 2240, arm: 210, angle: -0.5 },
@@ -77,6 +80,24 @@ export function nextCrate(extra) {
   if (!extra || !extra.crates) return null;
   for (const crate of extra.crates) if (!crate.taken) return crate;
   return null;
+}
+
+// District name labels, painted on the map in world space. The label sits at
+// the district centre with its subtitle underneath; the renderer culls the
+// ones far outside the camera view.
+export function drawDistrictLabels(ctx, state) {
+  const cam = state.camera;
+  for (const d of DISTRICTS) {
+    if (Math.abs(d.x - cam.x) > 1100 || Math.abs(d.y - cam.y) > 800) continue;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(8,10,24,0.55)';
+    const w = ctx.measureText(d.label).width + 26;
+    ctx.fillRect(d.x - w / 2, d.y - 20, w, 26);
+    ctx.fillStyle = '#22e6ff'; ctx.font = 'bold 17px system-ui, sans-serif';
+    ctx.fillText(d.label, d.x, d.y - 2);
+    ctx.fillStyle = '#9aa3c7'; ctx.font = '12px system-ui, sans-serif';
+    ctx.fillText(d.sub, d.x, d.y + 32);
+  }
 }
 
 export function drawPortside(ctx, state) {

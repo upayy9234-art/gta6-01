@@ -1,7 +1,8 @@
 // Combat: four guns with their own damage, fire rate, spread, ammo and range.
 // The pistol is infinite and always owned; the other three are found as
 // pickups around the city (roads, Harbor Park, the Portside quay — never
-// inside a building). Keys 1–4 switch between owned guns.
+// inside a building) or bought as ammo at Harbor Arms (see shops.js).
+// Keys 1–4 switch between owned guns.
 export const WEAPONS = {
   pistol: {
     id: 'pistol', key: '1', name: 'Pistol', short: 'Pistol',
@@ -55,6 +56,18 @@ export function weaponsOwnedCount(state) {
   return WEAPON_ORDER.reduce((n, id) => n + (w.owned[id] ? 1 : 0), 0);
 }
 
+// Shop ammo: tops a gun up (and marks it owned if it was not). Caps at the
+// gun's full mag size so a shopping spree never stacks absurd reserves.
+export function addAmmo(state, weaponId, amount) {
+  const w = state.weapons;
+  if (!w || !WEAPONS[weaponId]) return 0;
+  if (!w.owned[weaponId]) w.owned[weaponId] = true;
+  const cap = WEAPONS[weaponId].ammo;
+  const before = w.ammo[weaponId] ?? 0;
+  w.ammo[weaponId] = Math.min(cap, before + amount);
+  return w.ammo[weaponId] - before;
+}
+
 // key is a digit '1'–'4' or a weapon id. Refuses guns Kai does not own yet.
 export function switchWeapon(state, key) {
   const w = state.weapons;
@@ -63,7 +76,7 @@ export function switchWeapon(state, key) {
   const weapon = WEAPONS[id];
   if (!weapon) return false;
   if (!w.owned[id]) {
-    state.bannerText = 'You don\u2019t own the ' + weapon.name + ' yet — find its pickup crate.';
+    state.bannerText = 'You don\u2019t own the ' + weapon.name + ' yet — find its pickup crate or buy ammo at Harbor Arms.';
     state.bannerTimer = 2.5;
     return false;
   }
@@ -82,7 +95,7 @@ export function fireWeapon(player, state) {
   if (weapon.ammo !== Infinity && (w.ammo[weapon.id] ?? 0) <= 0) {
     w.current = 'pistol';
     weapon = WEAPONS.pistol;
-    state.bannerText = 'Out of ammo — back to the pistol.';
+    state.bannerText = 'Out of ammo — back to the pistol. Harbor Arms sells more.';
     state.bannerTimer = 2.5;
   }
   if (weapon.ammo !== Infinity) w.ammo[weapon.id] -= 1;

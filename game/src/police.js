@@ -1,7 +1,8 @@
 // Police: wanted stars drive how many patrol cars chase the player. Police cars
 // steer toward the player, ram, and shoot when close; officers on foot appear at
 // high wanted levels. Busted when health hits zero; escaping (out of sight) cools
-// the wanted level down.
+// the wanted level down. At wanted 0 two patrol cars still cruise the boulevard
+// and the Strip — the city feels watched even before Kai does anything wrong.
 import { WANTED } from './config.js';
 import { makeCar } from './traffic.js';
 
@@ -11,9 +12,22 @@ export function policeCountFor(wanted) {
   return wanted <= 0 ? 0 : wanted <= 1 ? 1 : wanted <= 2 ? 2 : wanted <= 3 ? 3 : wanted <= 4 ? 4 : 6;
 }
 
+// Two patrol cars cruise even with no heat; they only chase once wanted > 0.
+export function ensurePatrol(state, random) {
+  const patrol = state.cars.filter((c) => c.police && c.patrol).length;
+  for (let i = patrol; i < 2; i += 1) {
+    const a = random.angle();
+    const x = state.player.x + Math.cos(a) * 500;
+    const y = state.player.y + Math.sin(a) * 500;
+    const car = makeCar(Math.max(80, Math.min(3200, x)), Math.max(80, Math.min(2200, y)), a, POLICE_MODEL, { npc: true, police: true, patrol: true });
+    car.speed = 200;
+    state.cars.push(car);
+  }
+}
+
 export function ensurePolice(state, random) {
   const want = policeCountFor(state.player.wanted);
-  const have = state.cars.filter((c) => c.police).length;
+  const have = state.cars.filter((c) => c.police && !c.patrol).length;
   for (let i = have; i < want; i += 1) {
     const a = random.next() * Math.PI * 2;
     const x = state.player.x + Math.cos(a) * 700;
@@ -22,14 +36,22 @@ export function ensurePolice(state, random) {
     car.speed = 300;
     state.cars.push(car);
   }
-  // Remove surplus police when wanted falls.
+  // Remove surplus police when wanted falls (patrol cars are never removed here).
   let surplus = have - want;
   for (let i = state.cars.length - 1; i >= 0 && surplus > 0; i -= 1) {
-    if (state.cars[i].police) { state.cars.splice(i, 1); surplus -= 1; }
+    if (state.cars[i].police && !state.cars[i].patrol) { state.cars.splice(i, 1); surplus -= 1; }
   }
 }
 
 export function updatePoliceCar(car, dt, state) {
+  // A patrol car with no heat just cruises its road like any other traffic.
+  if (car.patrol && state.player.wanted === 0) {
+    car.x += Math.cos(car.angle) * car.speed * dt;
+    car.y += Math.sin(car.angle) * car.speed * dt;
+    if (car.x < 60 || car.x > 3200 || car.y < 60 || car.y > 2200) car.angle += Math.PI;
+    return Infinity;
+  }
+  car.patrol = false;
   const px = state.player.inCar ? state.player.inCar.x : state.player.x;
   const py = state.player.inCar ? state.player.inCar.y : state.player.y;
   const target = Math.atan2(py - car.y, px - car.x);
@@ -71,7 +93,7 @@ export function updatePoliceCar(car, dt, state) {
 export function nearestPoliceDistance(state) {
   let best = Infinity;
   for (const c of state.cars) {
-    if (!c.police) continue;
+    if (!c.police || c.patrol) continue;
     best = Math.min(best, Math.hypot(c.x - state.player.x, c.y - state.player.y));
   }
   return best;

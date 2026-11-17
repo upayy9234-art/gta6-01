@@ -1,13 +1,18 @@
-// Renderer: draws the city (roads, blocks, park, river, lamps), cars, pedestrians,
-// the player, bullets, particles and the waypoint arrow, then the title / pause /
-// game-over / win screens. Camera follows the player and zooms out while driving.
+// Renderer: draws the city (roads, blocks, park, river, coast, lamps), cars,
+// pedestrians, the player, bullets, particles and the waypoint arrow, then the
+// title / pause / game-over / win screens. Camera follows the player and zooms
+// out while driving. Golden hour paints a warm wash over everything, long
+// shadows stretch east from buildings and cars, and every named building wears
+// its sign.
 import { PALETTE, VIEW, WORLD } from './config.js';
 import { drawHUD, roundRect } from './hud.js';
 import { missionWaypoint } from './missions.js';
-import { drawPortside } from './district.js';
-import { drawStars, drawMoon, drawSun, skyState } from './daynight.js';
+import { drawPortside, drawDistrictLabels } from './district.js';
+import { drawCoast, drawPalm } from './coast.js';
+import { drawStars, drawMoon, drawSun, skyState, goldenFactor, shadowStretch } from './daynight.js';
 import { drawWeaponPickups } from './weapons.js';
 import { drawGarage, GARAGE_SPOT } from './garage.js';
+import { drawShopPanel } from './shops.js';
 import { heliSpotlightAlpha } from './heli.js';
 
 export const SCREEN_TITLE = 'title';
@@ -41,8 +46,22 @@ export function createRenderer(canvas) {
       drawEntities(ctx, state);
       ctx.restore();
       // Day/night sky: a tint that follows the clock, then stars, moon or sun
-      // in screen space so the sky always reads, day or night.
+      // in screen space so the sky always reads, day or night. Golden hour
+      // adds a warm sunset gradient over the whole frame instead of the
+      // night tint — the first impression must read sunset, not navy dark.
       const sky = skyState(state.timeOfDay);
+      if (sky.golden > 0.02) {
+        const g = ctx.createLinearGradient(0, 0, 0, VIEW.height);
+        g.addColorStop(0, 'rgba(255,150,70,' + (0.30 * sky.golden).toFixed(3) + ')');
+        g.addColorStop(0.55, 'rgba(255,110,80,' + (0.16 * sky.golden).toFixed(3) + ')');
+        g.addColorStop(1, 'rgba(120,40,90,' + (0.10 * sky.golden).toFixed(3) + ')');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, VIEW.width, VIEW.height);
+      }
+      if (sky.warmAlpha > 0.005) {
+        ctx.fillStyle = 'rgba(255,122,61,' + sky.warmAlpha.toFixed(3) + ')';
+        ctx.fillRect(0, 0, VIEW.width, VIEW.height);
+      }
       if (sky.nightAlpha > 0.005) {
         ctx.fillStyle = 'rgba(10,12,40,' + sky.nightAlpha.toFixed(3) + ')';
         ctx.fillRect(0, 0, VIEW.width, VIEW.height);
@@ -55,8 +74,9 @@ export function createRenderer(canvas) {
       if (screen === SCREEN_PAUSED) drawPause(ctx);
       if (screen === SCREEN_OVER) drawGameOver(ctx, state, best);
       if (screen === SCREEN_WIN) drawWin(ctx, state);
-      // The garage menu draws last, over everything.
+      // The garage menu draws last, over everything; the shop panel after it.
       if (state.garage && state.garage.open) drawGarage(ctx, state);
+      if (state.shops && state.shops.open) drawShopPanel(ctx, state);
     },
   };
 }
@@ -65,15 +85,19 @@ function drawWorld(ctx, state) {
   const cam = state.camera;
   const vw = VIEW.width + 200, vh = VIEW.height + 200;
   const x0 = Math.max(0, cam.x - vw / 2), y0 = Math.max(0, cam.y - vh / 2);
+  const golden = goldenFactor(state.timeOfDay);
+  const shadowLen = shadowStretch(state.timeOfDay);
   // Ground (unclamped so the view never shows void past the world edge).
-  ctx.fillStyle = PALETTE.ground; ctx.fillRect(cam.x - vw / 2, cam.y - vh / 2, vw, vh);
-  // River (east).
-  ctx.fillStyle = PALETTE.water; ctx.fillRect(2960, cam.y - vh / 2, WORLD.width - 2960, vh);
+  // At golden hour the ground and roads lift to a warm dusk brown instead
+  // of the night navy, so the sunset reads in every frame.
+  ctx.fillStyle = golden > 0.3 ? '#2e2840' : PALETTE.ground; ctx.fillRect(cam.x - vw / 2, cam.y - vh / 2, vw, vh);
+  // East coast: sand + ocean (drawn before roads so the boulevard sits on top).
+  drawCoast(ctx, state);
   // Bridges.
   ctx.fillStyle = PALETTE.bridge;
   ctx.fillRect(2900, 620, 500, 96); ctx.fillRect(2900, 1680, 500, 96);
   // Roads.
-  ctx.fillStyle = PALETTE.road;
+  ctx.fillStyle = golden > 0.3 ? '#38324e' : PALETTE.road;
   for (let x = 388; x < WORLD.width; x += 436) ctx.fillRect(x - WORLD.road / 2, y0, WORLD.road, vh);
   for (let y = 388; y < WORLD.height; y += 436) ctx.fillRect(x0, y - WORLD.road / 2, vw, WORLD.road);
   // Road centre dashes.
@@ -89,6 +113,11 @@ function drawWorld(ctx, state) {
       ctx.beginPath(); ctx.arc(tx, ty, 22, 0, Math.PI * 2); ctx.fill();
     }
   }
+  // Palms along the boulevard and in the park.
+  for (const palm of state.city.palms ?? []) {
+    if (Math.abs(palm.x - cam.x) > vw / 2 || Math.abs(palm.y - cam.y) > vh / 2) continue;
+    drawPalm(ctx, palm, state.time);
+  }
   // Neon Strip casino district: gold trim, neon sign and world label.
   const casino = state.city.casino;
   if (casino) {
@@ -102,23 +131,51 @@ function drawWorld(ctx, state) {
     ctx.fillStyle = 'rgba(255,197,61,0.25)';
     ctx.beginPath(); ctx.arc(casino.cx, casino.cy, 46, 0, Math.PI * 2); ctx.fill();
   }
+  // Long shadows at golden hour: dark shapes stretched east of each building.
+  if (shadowLen > 1.4) {
+    ctx.fillStyle = PALETTE.shadow;
+    for (const b of state.city.buildings) {
+      if (b.x > cam.x + vw / 2 + 100 || b.x + b.w < cam.x - vw / 2 - 100 || b.y > cam.y + vh / 2 + 100 || b.y + b.h < cam.y - vh / 2 - 100) continue;
+      const len = Math.min(140, b.w * 0.35 * shadowLen);
+      ctx.fillRect(b.x + b.w * 0.4, b.y + b.h * 0.25, len, b.h * 0.75);
+    }
+  }
   // Buildings with lit windows and neon signs.
   for (const b of state.city.buildings) {
     if (b.x > cam.x + vw / 2 + 100 || b.x + b.w < cam.x - vw / 2 - 100 || b.y > cam.y + vh / 2 + 100 || b.y + b.h < cam.y - vh / 2 - 100) continue;
     ctx.fillStyle = b.color; ctx.fillRect(b.x, b.y, b.w, b.h);
+    // Warm sunset light on the facade at golden hour.
+    if (golden > 0.3) {
+      ctx.fillStyle = 'rgba(255,140,70,' + (0.16 * golden).toFixed(3) + ')';
+      ctx.fillRect(b.x, b.y, b.w, b.h);
+    }
     ctx.fillStyle = 'rgba(255,255,255,0.08)'; ctx.fillRect(b.x, b.y, b.w, 6);
-    ctx.fillStyle = '#ffd76a';
+    // Windows glow warmer and brighter as the sun goes down.
+    ctx.fillStyle = golden > 0.3 ? '#ffb347' : '#ffd76a';
     const cols = Math.max(2, Math.floor(b.w / 34)), rows = Math.max(2, Math.floor(b.h / 34));
     for (let i = 0; i < cols; i += 1) for (let j = 0; j < rows; j += 1) {
       if ((i * 7 + j * 13 + b.windows) % 3 === 0) ctx.fillRect(b.x + 8 + i * 34, b.y + 10 + j * 34, 12, 16);
     }
     if (b.neon) {
-      ctx.fillStyle = b.neon; ctx.globalAlpha = 0.85;
+      const sky = skyState(state.timeOfDay);
+      ctx.fillStyle = b.neon; ctx.globalAlpha = Math.min(1, 0.55 + sky.neonBoost * 0.5);
       ctx.fillRect(b.x + b.w / 2 - 26, b.y - 4, 52, 8);
       ctx.globalAlpha = 1;
     }
     ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.lineWidth = 2; ctx.strokeRect(b.x, b.y, b.w, b.h);
   }
+  // Named building signs, painted above the roofline.
+  ctx.textAlign = 'center';
+  for (const sign of state.city.signs ?? []) {
+    if (Math.abs(sign.x - cam.x) > vw / 2 || Math.abs(sign.y - cam.y) > vh / 2) continue;
+    const flicker = 0.85 + 0.15 * Math.sin(state.time * 3 + sign.x);
+    ctx.globalAlpha = flicker;
+    ctx.fillStyle = sign.color; ctx.font = 'bold 13px system-ui, sans-serif';
+    ctx.fillText(sign.text, sign.x, sign.y - 8);
+    ctx.globalAlpha = 1;
+  }
+  // District name labels across the map.
+  drawDistrictLabels(ctx, state);
   // Street lamps glow — wider and brighter at night, per the day/night sky.
   const sky = skyState(state.timeOfDay);
   for (const lamp of state.city.lamps) {
@@ -134,6 +191,15 @@ function drawWorld(ctx, state) {
   ctx.fillText('🔧 GARAGE', GARAGE_SPOT.x, GARAGE_SPOT.y - 48);
   ctx.fillStyle = '#9aa3c7'; ctx.font = '12px system-ui, sans-serif';
   ctx.fillText('press G', GARAGE_SPOT.x, GARAGE_SPOT.y + 56);
+  // Shop markers: cyan ring + name, so the three shops are findable on foot.
+  for (const shop of state.shops?.list ?? []) {
+    ctx.strokeStyle = '#22e6ff'; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.arc(shop.x, shop.y, 30 + Math.sin(state.time * 3 + shop.x) * 3, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = '#22e6ff'; ctx.font = 'bold 12px system-ui, sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('🛒 ' + shop.name, shop.x, shop.y - 38);
+    ctx.fillStyle = '#9aa3c7'; ctx.font = '11px system-ui, sans-serif';
+    ctx.fillText('press E', shop.x, shop.y + 44);
+  }
   // Portside docks: quay, cranes, boats and mission crates.
   drawPortside(ctx, state);
   // Waypoint marker on the ground.
@@ -149,8 +215,14 @@ function drawWorld(ctx, state) {
   }
 }
 
-function drawCar(ctx, car) {
+function drawCar(ctx, car, state) {
   ctx.save();
+  // Golden-hour shadow: a soft offset copy to the east of the car.
+  const shadowLen = shadowStretch(state.timeOfDay);
+  if (shadowLen > 1.4) {
+    ctx.fillStyle = PALETTE.shadow;
+    ctx.fillRect(car.x - 30 + shadowLen * 12, car.y - 12, 64, 30);
+  }
   ctx.translate(car.x, car.y); ctx.rotate(car.angle);
   ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(-34, -18, 68, 36);
   ctx.fillStyle = car.color;
@@ -187,8 +259,8 @@ function drawEntities(ctx, state) {
     ctx.restore();
   }
   // Cars (NPC first, player car last so it draws on top).
-  for (const car of state.cars) if (car !== state.player.inCar) drawCar(ctx, car);
-  if (state.player.inCar) drawCar(ctx, state.player.inCar);
+  for (const car of state.cars) if (car !== state.player.inCar) drawCar(ctx, car, state);
+  if (state.player.inCar) drawCar(ctx, state.player.inCar, state);
   // Bullets — police tracers stay red, Kai's bullets keep their gun's colour.
   for (const b of state.bullets) {
     ctx.fillStyle = b.fromPolice ? '#ff6b6b' : (b.color ?? '#ffe27a');
@@ -220,11 +292,14 @@ function drawEntities(ctx, state) {
     const hx = heli.x, hy = heli.y + (heli.bob ?? 0);
     const px = state.player.inCar ? state.player.inCar.x : state.player.x;
     const py = state.player.inCar ? state.player.inCar.y : state.player.y;
+    // The cone swings with the heli's slow search sweep.
+    const sweep = heli.sweep ?? 0;
+    const sx = px + Math.cos(sweep) * 60, sy = py + Math.sin(sweep) * 60;
     ctx.save();
     // Heli spotlight cone: brighter at night, faint by day.
     ctx.fillStyle = 'rgba(255,240,180,' + heliSpotlightAlpha(state).toFixed(3) + ')';
     ctx.beginPath(); ctx.moveTo(hx, hy);
-    ctx.lineTo(px - 40, py - 40); ctx.lineTo(px + 40, py + 40); ctx.closePath(); ctx.fill();
+    ctx.lineTo(sx - 40, sy - 40); ctx.lineTo(sx + 40, sy + 40); ctx.closePath(); ctx.fill();
     ctx.fillStyle = 'rgba(0,0,0,0.35)';
     ctx.beginPath(); ctx.ellipse(hx + 8, hy + 10, 30, 12, 0, 0, Math.PI * 2); ctx.fill();
     ctx.translate(hx, hy); ctx.rotate(heli.angle);
@@ -256,28 +331,48 @@ function drawEntities(ctx, state) {
   }
 }
 
+function readSave() {
+  try {
+    const raw = window.localStorage.getItem('neon-harbor.save.v1');
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!Number.isInteger(data.mission)) return null;
+    return data;
+  } catch { return null; }
+}
+
 function drawTitle(ctx, state, best) {
-  ctx.fillStyle = 'rgba(6,8,20,0.58)'; ctx.fillRect(0, 0, VIEW.width, VIEW.height);
+  const golden = goldenFactor(state.timeOfDay);
+  ctx.fillStyle = 'rgba(6,8,20,' + (golden > 0.3 ? 0.42 : 0.58) + ')';
+  ctx.fillRect(0, 0, VIEW.width, VIEW.height);
   ctx.textAlign = 'center';
   ctx.fillStyle = PALETTE.neonPink;
   ctx.font = 'bold 84px system-ui, sans-serif';
-  ctx.fillText('NEON HARBOR', VIEW.width / 2, 170);
+  ctx.fillText('NEON HARBOR', VIEW.width / 2, 150);
   ctx.fillStyle = PALETTE.neonCyan; ctx.font = 'bold 26px system-ui, sans-serif';
-  ctx.fillText('AN OPEN-WORLD CRIME STORY  ·  VIRELIA', VIEW.width / 2, 212);
+  ctx.fillText('AN OPEN-WORLD CRIME STORY  ·  VIRELIA', VIEW.width / 2, 192);
+  ctx.fillStyle = PALETTE.sunsetGold; ctx.font = 'bold 20px system-ui, sans-serif';
+  ctx.fillText('★  12 MISSIONS · 3 DAYS · A CITY THAT REMEMBERS  ★', VIEW.width / 2, 226);
   ctx.fillStyle = PALETTE.text; ctx.font = '16px system-ui, sans-serif';
-  ctx.fillText('Kai Mercer. One last job for fixer Mara Voss. Steal cars, outrun the VPD,', VIEW.width / 2, 268);
-  ctx.fillText('finish six missions, rob the Neon Strip casino, raid the Portside docks, and take the Harbor Vault score.', VIEW.width / 2, 292);
+  ctx.fillText('Kai Mercer. One last job for fixer Mara Voss — then the Harbor Vault heist.', VIEW.width / 2, 268);
+  ctx.fillText('Steal cars, outrun the VPD, rob the Neon Strip casino, raid the Portside docks,', VIEW.width / 2, 292);
+  ctx.fillText('eat at Pier 9, tune your ride at Virelia Motors, and take the final score.', VIEW.width / 2, 316);
   ctx.fillStyle = PALETTE.muted; ctx.font = '15px system-ui, sans-serif';
-  ctx.fillText('WASD move / drive  ·  Mouse aim  ·  Click or Space shoot  ·  E enter / exit car', VIEW.width / 2, 340);
-  ctx.fillText('Shift run / nitro  ·  H honk  ·  G garage  ·  1–4 switch weapon  ·  Esc pause  ·  M sound', VIEW.width / 2, 364);
+  ctx.fillText('WASD move / drive  ·  Mouse aim  ·  Click or Space shoot  ·  E enter car / shop', VIEW.width / 2, 360);
+  ctx.fillText('Shift run / nitro  ·  H honk  ·  G garage  ·  R radio  ·  1–4 switch weapon  ·  Esc pause  ·  M sound', VIEW.width / 2, 384);
+  const save = readSave();
   const pulse = 0.7 + Math.sin(state.time * 3) * 0.3;
   ctx.globalAlpha = pulse;
   ctx.fillStyle = PALETTE.neonGold; ctx.font = 'bold 24px system-ui, sans-serif';
-  ctx.fillText('▶  CLICK OR PRESS SPACE TO START', VIEW.width / 2, 440);
+  ctx.fillText('▶  CLICK OR PRESS SPACE TO START', VIEW.width / 2, 448);
   ctx.globalAlpha = 1;
+  if (save && save.mission > 0 && save.mission < 12) {
+    ctx.fillStyle = '#3ddc84'; ctx.font = 'bold 18px system-ui, sans-serif';
+    ctx.fillText('CONTINUE — DAY ' + (save.day ?? 1) + ' · MISSION ' + (save.mission + 1) + '/12 · $' + (save.money ?? 0).toLocaleString('en-US'), VIEW.width / 2, 486);
+  }
   if (best > 0) {
     ctx.fillStyle = PALETTE.text; ctx.font = '15px system-ui, sans-serif';
-    ctx.fillText('Best score: ' + best.toLocaleString('en-US'), VIEW.width / 2, 480);
+    ctx.fillText('Best score: ' + best.toLocaleString('en-US'), VIEW.width / 2, 522);
   }
   ctx.fillStyle = PALETTE.muted; ctx.font = '13px system-ui, sans-serif';
   ctx.fillText('A fully original game — city, characters, story and music made for this bounty.', VIEW.width / 2, 640);
@@ -303,13 +398,13 @@ function drawGameOver(ctx, state, best) {
 }
 
 function drawWin(ctx, state) {
-  ctx.fillStyle = 'rgba(6,20,12,0.8)'; ctx.fillRect(0, 0, VIEW.width, VIEW.height);
+  ctx.fillStyle = 'rgba(6,20,12,0.68)'; ctx.fillRect(0, 0, VIEW.width, VIEW.height);
   ctx.fillStyle = PALETTE.neonGold; ctx.textAlign = 'center'; ctx.font = 'bold 60px system-ui, sans-serif';
-  ctx.fillText('SIX JOBS DONE', VIEW.width / 2, 280);
+  ctx.fillText('TWELVE JOBS DONE', VIEW.width / 2, 270);
   ctx.fillStyle = PALETTE.text; ctx.font = '18px system-ui, sans-serif';
-  ctx.fillText('Kai Mercer walks away from the Harbor Vault, the Neon Strip and the Portside docks with the whole score.', VIEW.width / 2, 330);
-  ctx.fillText('Six jobs done. Mara Voss smiles. Virelia is yours now.', VIEW.width / 2, 358);
-  ctx.fillText('Final score ' + state.score.toLocaleString('en-US') + '   ·   Cash $' + state.player.money.toLocaleString('en-US'), VIEW.width / 2, 400);
+  ctx.fillText('Kai Mercer walks away from the Harbor Vault with the final score —', VIEW.width / 2, 320);
+  ctx.fillText('twelve jobs, three days, one legend. Mara Voss smiles. Virelia is yours now.', VIEW.width / 2, 348);
+  ctx.fillText('Final score ' + state.score.toLocaleString('en-US') + '   ·   Cash $' + state.player.money.toLocaleString('en-US'), VIEW.width / 2, 390);
   ctx.fillStyle = PALETTE.neonCyan; ctx.font = 'bold 20px system-ui, sans-serif';
-  ctx.fillText('CLICK OR PRESS SPACE TO PLAY AGAIN', VIEW.width / 2, 470);
+  ctx.fillText('CLICK OR PRESS SPACE TO PLAY AGAIN', VIEW.width / 2, 460);
 }

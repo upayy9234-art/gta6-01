@@ -2,21 +2,28 @@
 // the renderer paints what is there. Screens: title, play, paused, busted, win.
 // ?seed=N fixes the city. ?shot=start|play|chase|win (with &seed=N) stages that
 // scene instead of running the loop, paints it twice and sets window.__shotReady.
-import { BEST_KEY, SAVE_KEY, STEP, VIEW, WORLD } from './config.js';
+// The title screen is an ATTRACT MODE: the city lives behind it — traffic
+// drives, VPD patrol cars cruise, pedestrians stroll, the radio ticker turns —
+// with no input at all. The clock opens at 18:05 golden hour.
+import { BEST_KEY, SAVE_KEY, STEP, SUNSET_START, VIEW, WORLD } from './config.js';
 import { createRandom } from './random.js';
-import { buildCity, isOnRoad } from './world.js';
+import { buildCity, buildParkedCars } from './world.js';
 import { buildPortside } from './district.js';
+import { buildCoast } from './coast.js';
 import { createDayNight, updateDayNight } from './daynight.js';
 import { createGarage, applyGarageToCar, updateNitro, toggleGarage, garageKey } from './garage.js';
 import { createWeapons, switchWeapon, fireWeapon, updateWeaponPickups, WEAPON_ORDER } from './weapons.js';
 import { createExtraMissions, countPoliceKill } from './missions2.js';
+import { createDay3 } from './missions3.js';
+import { createRadio, updateRadio, cycleStation } from './radio.js';
+import { createShops, nearestShop, toggleShop, shopKey } from './shops.js';
 import { createPlayer, updatePlayerOnFoot, addWanted, decayWanted, regenHealth } from './player.js';
-import { spawnTrafficCar, spawnPedestrian, updateCarPhysics, updateTrafficCar, updatePedestrian, burst, makeCar } from './traffic.js';
-import { ensurePolice, updatePoliceCar, nearestPoliceDistance } from './police.js';
+import { spawnTrafficCar, spawnPedestrian, updateCarPhysics, updateTrafficCar, updatePedestrian, burst, makeCar, makeParkedCar } from './traffic.js';
+import { ensurePolice, ensurePatrol, updatePoliceCar, nearestPoliceDistance } from './police.js';
 import { ensureHeli, updateHeli } from './heli.js';
 import { createMissions, updateMissions, missionWaypoint } from './missions.js';
 import { createAudio } from './audio.js';
-import { ACTION_CONFIRM, ACTION_PAUSE, ACTION_ENTER_CAR, ACTION_MUTE, ACTION_HONK, ACTION_GARAGE, createInput } from './input.js';
+import { ACTION_CONFIRM, ACTION_PAUSE, ACTION_ENTER_CAR, ACTION_MUTE, ACTION_HONK, ACTION_GARAGE, ACTION_RADIO, createInput } from './input.js';
 import { createRenderer, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE, SCREEN_WIN } from './render.js';
 import { stageShot } from './shots.js';
 
@@ -33,7 +40,7 @@ const audio = createAudio();
 
 function createState() {
   const state = {
-    random, audio, time: 0, timeOfDay: 1290, // 21:30 — neon night
+    random, audio, time: 0, timeOfDay: SUNSET_START, // 18:05 — golden hour
     score: 0, screen: SCREEN_TITLE, bannerText: '', bannerTimer: 0,
     camera: { x: 388, y: 388, scale: 1 },
     city: buildCity(random),
@@ -41,17 +48,31 @@ function createState() {
     cars: [], peds: [], bullets: [], particles: [], helis: [], prevWanted: 0,
     missions: createMissions(),
     day: 1, dayNight: createDayNight(),
-    extra: createExtraMissions(), garage: createGarage(), weapons: createWeapons(),
+    extra: createExtraMissions(), day3: createDay3(),
+    garage: createGarage(), weapons: createWeapons(),
+    radio: createRadio(), shops: createShops(),
   };
-  // The Portside docks district owns the south-east corner of the city.
+  // The east coast (beach, palms, beachfront signs) and the Portside docks
+  // district own their corners of the city.
+  buildCoast(state.city, random);
   buildPortside(state.city, random);
-  for (let i = 0; i < 10; i += 1) state.cars.push(spawnTrafficCar(random, state));
-  for (let i = 0; i < 22; i += 1) state.peds.push(spawnPedestrian(random, state));
+  // Denser streets: 16 moving cars, 8 parked, 30 pedestrians + a busy crowd
+  // along the north road, so the opening frames read alive.
+  for (let i = 0; i < 16; i += 1) state.cars.push(spawnTrafficCar(random, state));
+  for (const spot of buildParkedCars(random)) state.cars.push(makeParkedCar(spot));
+  for (let i = 0; i < 30; i += 1) state.peds.push(spawnPedestrian(random, state));
+  for (let i = 0; i < 10; i += 1) {
+    const ped = spawnPedestrian(random, state);
+    ped.x = random.range(500, 1800); ped.y = random.range(320, 460); ped.beach = false;
+    state.peds.push(ped);
+  }
   state.reset = function reset() {
     const fresh = createState();
     for (const key of Object.keys(fresh)) state[key] = fresh[key];
     state.reset = reset;
+    state.saveGame = saveGame;
   };
+  state.saveGame = saveGame;
   return state;
 }
 
@@ -64,6 +85,7 @@ function saveGame() {
       x: state.player.x, y: state.player.y, day: state.day,
       garage: { upgrades: state.garage.upgrades, paint: state.garage.paint, ownedPaints: state.garage.ownedPaints },
       weapons: { owned: state.weapons.owned, ammo: state.weapons.ammo },
+      radioStation: state.radio ? state.radio.station : 0,
     }));
   } catch { /* storage off: progress lasts this visit only */ }
 }
@@ -76,8 +98,8 @@ function loadGame() {
     state.player.money = data.money ?? 250;
     state.score = data.score ?? 0;
     state.player.x = data.x ?? 388; state.player.y = data.y ?? 388;
-    if (Number.isInteger(data.mission) && data.mission > 0 && data.mission < 6) state.missions.index = data.mission;
-    if (Number.isInteger(data.day) && data.day >= 1) state.day = data.day;
+    if (Number.isInteger(data.mission) && data.mission > 0 && data.mission < 12) state.missions.index = data.mission;
+    if (Number.isInteger(data.day) && data.day >= 1 && data.day <= 3) state.day = data.day;
     if (data.garage) {
       Object.assign(state.garage.upgrades, data.garage.upgrades ?? {});
       if (data.garage.paint !== undefined) state.garage.paint = data.garage.paint;
@@ -86,8 +108,11 @@ function loadGame() {
     if (data.weapons) {
       Object.assign(state.weapons.owned, data.weapons.owned ?? {});
       Object.assign(state.weapons.ammo, data.weapons.ammo ?? {});
+      // JSON turns Infinity into null — the pistol's ammo is always infinite.
+      state.weapons.ammo.pistol = Infinity;
       if (!state.weapons.owned[state.weapons.current]) state.weapons.current = 'pistol';
     }
+    if (state.radio && Number.isInteger(data.radioStation)) state.radio.station = data.radioStation % 3;
     return true;
   } catch { return false; }
 }
@@ -116,6 +141,8 @@ function enterOrExitCar() {
     p.inCar = null; p.x = car.x - 40; p.y = car.y; p.onFoot = true;
     return;
   }
+  // Near a shop on foot? E opens the shop instead of stealing a car.
+  if (nearestShop(state)) { toggleShop(state); return; }
   const car = nearestCar(70);
   if (car) {
     // Stealing a parked / NPC car raises the wanted level.
@@ -172,11 +199,30 @@ function updateParticles(dt) {
   }
 }
 
+// Attract mode: the city lives behind the title screen. Traffic drives,
+// patrol cars cruise, pedestrians stroll, the radio ticker turns and the
+// golden-hour clock creeps on — all with no input at all.
+function updateAttract(state, dt) {
+  state.time += dt;
+  state.timeOfDay = (state.timeOfDay + dt * 0.6) % 1440;
+  updateDayNight(state);
+  updateRadio(state, dt);
+  for (const car of state.cars) {
+    if (car.police) updatePoliceCar(car, dt, state);
+    else if (car.npc) updateTrafficCar(car, dt, state, random);
+  }
+  for (const ped of state.peds) updatePedestrian(ped, dt, state, random);
+  ensurePatrol(state, random);
+  // Keep traffic topped up near the player.
+  if (state.cars.filter((c) => c.npc && !c.police).length < 12) state.cars.push(spawnTrafficCar(random, state));
+}
+
 state.stepWorld = function stepWorld(dt, input) {
   const p = state.player;
   state.time += dt;
   state.timeOfDay = (state.timeOfDay + dt * 0.6) % 1440;
   updateDayNight(state);
+  updateRadio(state, dt);
   updateWeaponPickups(state);
   state.bannerTimer = Math.max(0, state.bannerTimer - dt);
   if (p.inCar) {
@@ -221,7 +267,8 @@ state.stepWorld = function stepWorld(dt, input) {
     }
   }
   // Keep traffic topped up near the player.
-  if (state.cars.filter((c) => c.npc && !c.police).length < 9) state.cars.push(spawnTrafficCar(random, state));
+  if (state.cars.filter((c) => c.npc && !c.police).length < 12) state.cars.push(spawnTrafficCar(random, state));
+  ensurePatrol(state, random);
   ensurePolice(state, random);
   // Wanted siren on heat rising; police helicopter at wanted 4+.
   if (p.wanted > state.prevWanted) state.audio?.siren();
@@ -233,7 +280,7 @@ state.stepWorld = function stepWorld(dt, input) {
   decayWanted(p, dt, nearestPoliceDistance(state) > 520);
   updateBullets(dt);
   updateParticles(dt);
-  audio.update(dt, !!p.inCar);
+  audio.update(dt, !!p.inCar, state.radio ? state.radio.station : 0);
   // Camera follows the player, clamped so the view stays inside the city.
   const tx = p.inCar ? p.inCar.x : p.x, ty = p.inCar ? p.inCar.y : p.y;
   state.camera.x += (tx - state.camera.x) * Math.min(1, dt * 5);
@@ -276,7 +323,7 @@ function runGame() {
     if (!started) { loadGame(); started = true; }
     state.screen = SCREEN_PLAY; screen = SCREEN_PLAY;
     audio.unlock();
-    announce('Playing. Mission: ' + (state.missions.index + 1) + ' of 6.');
+    announce('Playing. Mission: ' + (state.missions.index + 1) + ' of 12.');
   }
   function endGame() {
     screen = SCREEN_OVER;
@@ -287,13 +334,19 @@ function runGame() {
     const actions = input.takeActions();
     if (actions & ACTION_MUTE) { const muted = audio.toggleMute(); announce(muted ? 'Sound off.' : 'Sound on.'); }
     if (actions & ACTION_HONK && screen === SCREEN_PLAY && state.player.inCar) audio.honk();
+    if (actions & ACTION_RADIO && screen === SCREEN_PLAY) cycleStation(state);
     if (actions & ACTION_GARAGE && screen === SCREEN_PLAY) toggleGarage(state);
-    if (actions & ACTION_ENTER_CAR && screen === SCREEN_PLAY) enterOrExitCar();
+    if (actions & ACTION_ENTER_CAR && screen === SCREEN_PLAY) {
+      // With a shop open, E closes the shop instead of entering a car.
+      if (state.shops.open) { state.shops.open = null; }
+      else enterOrExitCar();
+    }
     // Digit keys: with the garage open they buy (1–3 upgrades, 4–9 paint);
-    // otherwise 1–4 switch between owned guns.
+    // with a shop open they buy (1–3 items); otherwise 1–4 switch guns.
     const digit = input.takeDigit();
     if (digit > 0 && screen === SCREEN_PLAY) {
       if (state.garage.open) garageKey(state, digit);
+      else if (state.shops.open) shopKey(state, digit);
       else if (digit >= 1 && digit <= 4) switchWeapon(state, WEAPON_ORDER[digit - 1]);
     }
     if (actions & ACTION_CONFIRM && (screen === SCREEN_TITLE || screen === SCREEN_OVER || screen === SCREEN_WIN)) {
@@ -311,17 +364,12 @@ function runGame() {
     accumulator += Math.min((now - last) / 1000, MAX_FRAME);
     last = now;
     handleActions();
-    // The world freezes while the garage menu is open — Kai is shopping.
-    if (screen === SCREEN_PLAY && !state.garage.open) {
+    // The world freezes while the garage menu or a shop panel is open.
+    if (screen === SCREEN_PLAY && !state.garage.open && !state.shops.open) {
       while (accumulator >= STEP) { state.stepWorld(STEP, input); accumulator -= STEP; if (state.screen === SCREEN_OVER) { endGame(); break; } if (state.screen === SCREEN_WIN) { screen = SCREEN_WIN; saveBest(Math.max(best, state.score)); break; } }
     } else if (screen === SCREEN_TITLE) {
-      // Ambient city life behind the title screen.
-      while (accumulator >= STEP) {
-        state.time += STEP;
-        for (const car of state.cars) if (car.npc && !car.police) updateTrafficCar(car, STEP, state, random);
-        for (const ped of state.peds) updatePedestrian(ped, STEP, state, random);
-        accumulator -= STEP;
-      }
+      // Attract mode: the living city plays behind the title screen.
+      while (accumulator >= STEP) { updateAttract(state, STEP); accumulator -= STEP; }
     } else accumulator = 0;
     renderer.draw(state, screen, best);
   }

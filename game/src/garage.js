@@ -1,7 +1,8 @@
 // Virelia Motors — the garage on the north road (y=388). Park within 110 px,
 // press G, and spend Kai's cash on engine, armor and nitro upgrades plus six
 // paint jobs. Upgrades apply to whatever car Kai climbs into next — and to the
-// car he is already driving when he buys them.
+// car he is already driving when he buys them. Garage state rides along in the
+// save file, so a tuned ride survives a reload.
 import { CAR, CAR_MODELS } from './config.js';
 import { spendCash } from './player.js';
 
@@ -167,6 +168,7 @@ const CAR_OF_THE_DAY_LINES = [
   'fresh off the docks, still smells like sea air',
   'the VPD hates this one — that is the review',
   'purrs at idle, roars at full throttle',
+  'sunset paint, golden-hour soul',
 ];
 
 export function carOfTheDay(random) {

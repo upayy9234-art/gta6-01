@@ -1,11 +1,14 @@
-// HUD: cash, wanted stars, health bar, mission objective, minimap, clock and
-// banners. All drawn on the same canvas, top-down, neon style.
+// HUD: cash, wanted stars, health bar, mission objective (MISSION n/12 + stage),
+// radio ticker, shop hint, minimap, clock and banners. All drawn on the same
+// canvas, top-down, neon style.
 import { PALETTE, VIEW, WORLD, MISSIONS } from './config.js';
-import { missionProgressText, missionWaypoint } from './missions.js';
+import { missionProgressText, missionWaypoint, missionCounterText } from './missions.js';
 import { clockText } from './daynight.js';
 import { weaponHudText } from './weapons.js';
 import { garageSummary } from './garage.js';
 import { nearestPoliceCar } from './police.js';
+import { radioTickerText, radioStationName } from './radio.js';
+import { shopSummary } from './shops.js';
 
 export function drawHUD(ctx, state) {
   const p = state.player;
@@ -51,12 +54,12 @@ export function drawHUD(ctx, state) {
     VIEW.width - 220, 56,
   );
 
-  // Mission objective bar (top centre).
+  // Mission objective bar (top centre): "MISSION 7/12 · DAY 3" + stage text.
   const mission = MISSIONS[state.missions.index];
   ctx.fillStyle = PALETTE.panel;
-  const label = state.missions.done ? 'ALL MISSIONS COMPLETE — VIRELIA IS YOURS' : (mission ? mission.title : '');
+  const label = state.missions.done ? 'ALL 12 MISSIONS COMPLETE — VIRELIA IS YOURS' : missionCounterText(state);
   ctx.font = 'bold 14px system-ui, sans-serif';
-  const w = Math.max(320, ctx.measureText(label).width + 32);
+  const w = Math.max(360, ctx.measureText(label).width + 32);
   roundRect(ctx, (VIEW.width - w) / 2, 12, w, 52, 10); ctx.fill();
   ctx.fillStyle = PALETTE.neonCyan; ctx.textAlign = 'center';
   ctx.fillText(label, VIEW.width / 2, 20);
@@ -74,12 +77,32 @@ export function drawHUD(ctx, state) {
     ctx.globalAlpha = 1;
   }
 
+  // Radio ticker: station + current track / dispatch line, bottom centre.
+  const ticker = radioTickerText(state);
+  ctx.fillStyle = 'rgba(8,10,24,0.78)';
+  const tw = Math.min(VIEW.width - 420, ctx.measureText('♪ ' + ticker).width + 120);
+  roundRect(ctx, (VIEW.width - tw) / 2, VIEW.height - 104, tw, 30, 8); ctx.fill();
+  ctx.fillStyle = '#ff5e8a'; ctx.font = 'bold 13px system-ui, sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('♪ ' + ticker, VIEW.width / 2, VIEW.height - 95);
+  ctx.fillStyle = PALETTE.muted; ctx.font = '11px system-ui, sans-serif';
+  ctx.fillText(radioStationName(state) + ' · press R to change station', VIEW.width / 2, VIEW.height - 80);
+
+  // Shop hint (when a shop is near) — right above the controls hint.
+  const shopHint = shopSummary(state);
+  if (shopHint) {
+    ctx.fillStyle = 'rgba(8,10,24,0.78)';
+    const sw = ctx.measureText(shopHint).width + 24;
+    roundRect(ctx, 12, VIEW.height - 92, sw, 26, 8); ctx.fill();
+    ctx.fillStyle = '#22e6ff'; ctx.font = 'bold 12px system-ui, sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText(shopHint, 24, VIEW.height - 84);
+  }
+
   // Controls hint bottom-left.
   ctx.fillStyle = 'rgba(8,10,24,0.6)';
   roundRect(ctx, 12, VIEW.height - 58, 380, 46, 8); ctx.fill();
   ctx.fillStyle = PALETTE.muted; ctx.font = '12px system-ui, sans-serif'; ctx.textAlign = 'left';
-  ctx.fillText(p.inCar ? 'WASD drive · E exit car · Space handbrake · H honk · G garage' : 'WASD move · Mouse aim · Click/Space shoot · E enter car · G garage', 22, VIEW.height - 46);
-  ctx.fillText('Shift run / nitro · 1–4 switch weapon · Esc pause · M sound · Cash: steal cars, finish missions', 22, VIEW.height - 28);
+  ctx.fillText(p.inCar ? 'WASD drive · E exit car · Space handbrake · H honk · G garage' : 'WASD move · Mouse aim · Click/Space shoot · E enter car / shop · G garage', 22, VIEW.height - 46);
+  ctx.fillText('Shift run / nitro · 1–4 switch weapon · R radio · Esc pause · M sound · Cash: steal cars, finish missions', 22, VIEW.height - 28);
 
   // Clock + day/night label, left of the minimap so it never overlaps it.
   ctx.fillStyle = PALETTE.text; ctx.font = 'bold 13px system-ui, sans-serif'; ctx.textAlign = 'right';
@@ -107,6 +130,11 @@ function drawMinimap(ctx, state) {
   if (casino) {
     ctx.fillStyle = '#ffc53d';
     ctx.fillRect(x0 + casino.x * sx, y0 + casino.y * sy, casino.w * sx, casino.h * sy);
+  }
+  // Shops on the minimap (cyan squares).
+  ctx.fillStyle = '#22e6ff';
+  for (const shop of state.shops?.list ?? []) {
+    ctx.fillRect(x0 + shop.x * sx - 2, y0 + shop.y * sy - 2, 4, 4);
   }
   // Waypoint.
   const wp = missionWaypoint(state);

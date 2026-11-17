@@ -1,6 +1,8 @@
 // Traffic, pedestrians and car physics. NPC cars cruise the road grid and turn at
-// intersections; pedestrians stroll the sidewalks. The player's car uses simple
-// arcade physics: accelerate, steer, drift a little, crash into buildings.
+// intersections; pedestrians stroll the sidewalks and the beach. The player's
+// car uses simple arcade physics: accelerate, steer, drift a little, crash into
+// buildings. Round 5 runs more traffic (14 cars, 30 pedestrians) plus parked
+// cars from world.js, so the streets read busy even at golden hour.
 import { CAR, CAR_MODELS, WORLD } from './config.js';
 import { isInWater, nearestRoadPoint, roadCentersX, roadCentersY } from './world.js';
 
@@ -9,9 +11,15 @@ export function makeCar(x, y, angle, model, opts = {}) {
   return {
     id: carId += 1, x, y, angle, speed: 0, model, color: model.color,
     health: CAR.health, maxHealth: CAR.health, speedMul: 1, nitroBoost: false,
-    npc: !!opts.npc, police: !!opts.police, target: null,
+    npc: !!opts.npc, police: !!opts.police, patrol: !!opts.patrol, target: null,
     vx: 0, vy: 0, stuck: 0, honk: 0, driver: opts.driver ?? true,
   };
+}
+
+export function makeParkedCar(spot) {
+  const car = makeCar(spot.x, spot.y, spot.angle, { name: 'Parked', color: spot.color, speed: 0.9 }, { npc: false, driver: false });
+  car.speed = 0;
+  return car;
 }
 
 export function spawnTrafficCar(random, state) {
@@ -26,18 +34,28 @@ export function spawnTrafficCar(random, state) {
 }
 
 export function spawnPedestrian(random, state) {
+  // One in five pedestrians strolls the beach instead of a sidewalk.
+  if (random.next() < 0.2) {
+    return {
+      x: random.range(2910, 2950), y: random.range(150, WORLD.height - 150),
+      angle: random.next() < 0.5 ? Math.PI / 2 : -Math.PI / 2, speed: random.range(24, 44),
+      color: ['#e8e4d8', '#d86a6a', '#6ad8a0', '#d8b36a', '#8a9ae8'][random.int(0, 4)],
+      walkPhase: random.next() * 6, scared: 0, beach: true,
+    };
+  }
   const p = nearestRoadPoint(random.range(200, WORLD.width - 600), random.range(200, WORLD.height - 200));
   return {
     x: p.x + random.range(-70, 70), y: p.y + random.range(-70, 70),
     angle: random.next() * Math.PI * 2, speed: random.range(28, 55),
     color: ['#e8e4d8', '#d86a6a', '#6ad8a0', '#d8b36a', '#8a9ae8'][random.int(0, 4)],
-    walkPhase: random.next() * 6, scared: 0,
+    walkPhase: random.next() * 6, scared: 0, beach: false,
   };
 }
 
 export function updateCarPhysics(car, input, dt, state) {
   // Player-driven car.
   const forward = Math.cos(car.angle), right = Math.sin(car.angle);
+  void forward; void right;
   let throttle = 0;
   if (input.up()) throttle = 1;
   else if (input.down()) throttle = car.speed > 5 ? -1 : -0.55;
@@ -83,8 +101,6 @@ export function updateTrafficCar(car, dt, state, random) {
     const turns = [0, Math.PI / 2, -Math.PI / 2];
     car.angle += random.pick(turns);
   }
-  // Keep to the right-hand lane: nudge toward the road centre offset.
-  const road = nearestRoadPoint(car.x, car.y);
   car.x += Math.cos(car.angle) * car.speed * dt;
   car.y += Math.sin(car.angle) * car.speed * dt;
   // Slow for a car ahead on the same road — and honk at it while stuck.
@@ -106,12 +122,18 @@ export function updateTrafficCar(car, dt, state, random) {
 
 export function updatePedestrian(ped, dt, state, random) {
   if (ped.scared > 0) { ped.scared -= dt; ped.speed = 150; }
-  else ped.speed = 45;
+  else ped.speed = ped.beach ? 34 : 45;
   ped.x += Math.cos(ped.angle) * ped.speed * dt;
   ped.y += Math.sin(ped.angle) * ped.speed * dt;
   ped.walkPhase += dt * 8;
   if (random.next() < dt * 0.2) ped.angle += random.range(-1.2, 1.2);
-  if (ped.x < 60 || ped.x > WORLD.width - 500 || ped.y < 60 || ped.y > WORLD.height - 60) ped.angle += Math.PI;
+  if (ped.beach) {
+    // Beach walkers stroll up and down the sand, never into the water.
+    if (ped.y < 80 || ped.y > WORLD.height - 80) ped.angle += Math.PI;
+    ped.x = Math.max(2908, Math.min(2952, ped.x));
+  } else if (ped.x < 60 || ped.x > WORLD.width - 500 || ped.y < 60 || ped.y > WORLD.height - 60) {
+    ped.angle += Math.PI;
+  }
 }
 
 export function burst(state, x, y, color, n) {

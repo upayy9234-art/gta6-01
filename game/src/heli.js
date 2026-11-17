@@ -1,11 +1,13 @@
 // Police helicopter: spawns once the wanted level hits 4, hovers above the
 // player with a lag and a bob, shines a spotlight, and shoots from the air
 // at wanted level 5. One heli at most; it leaves when the heat drops below 4.
+// During the Day 3 finale the heli sweeps its spotlight in a slow circle while
+// it hunts, so the chase reads even from the minimap.
 import { HELI } from './config.js';
 import { daylight } from './daynight.js';
 
 // The spotlight cone is faint by day and bright at night — the heli hunts
-// harder when the city is dark.
+// harder when the city is dark. At golden hour it cuts through the haze.
 export function heliSpotlightAlpha(state) {
   return 0.06 + 0.16 * (1 - daylight(state.timeOfDay));
 }
@@ -16,6 +18,7 @@ export function ensureHeli(state) {
     state.helis.push({
       x: state.player.x + 220, y: state.player.y - 260,
       angle: 0, bob: 0, fireCooldown: 0.6, rotorPhase: 0, rotorCd: 0,
+      sweep: 0,
     });
     state.audio?.siren();
   }
@@ -34,6 +37,8 @@ export function updateHeli(heli, dt, state) {
   heli.angle = Math.atan2(py - heli.y, px - heli.x);
   heli.rotorPhase += dt * 22;
   heli.rotorCd -= dt;
+  // Slow spotlight sweep: the cone swings around the player while it hunts.
+  heli.sweep = (heli.sweep ?? 0) + dt * 0.7;
   if (heli.rotorCd <= 0) { heli.rotorCd = 0.5; state.audio?.rotor(); }
   // At wanted 5 the heli fires down at the player.
   heli.fireCooldown -= dt;

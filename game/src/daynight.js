@@ -1,10 +1,14 @@
-// Real day/night cycle for Virelia. timeOfDay is minutes after midnight; the
-// sky, lamps, neon, stars, sun and moon all follow it, and the day counter
-// ticks over every time the clock wraps past midnight.
+// Real day/night cycle for Virelia, opening at golden hour. timeOfDay is minutes
+// after midnight; the sky, lamps, neon, stars, sun and moon all follow it, and the
+// day counter ticks over every time the clock wraps past midnight.
+// Golden hour runs 17:30–19:00: warm orange horizon, low sun, long shadows.
+import { GOLDEN_END, GOLDEN_START } from './config.js';
+
 export function dayPhase(t) {
   if (t < 300) return 'night';
   if (t < 420) return 'dawn';
-  if (t < 1080) return 'day';
+  if (t < GOLDEN_START) return 'day';
+  if (t < GOLDEN_END) return 'golden';
   if (t < 1260) return 'dusk';
   return 'night';
 }
@@ -13,6 +17,7 @@ export function phaseLabel(t) {
   const phase = dayPhase(t);
   if (phase === 'dawn') return 'DAWN';
   if (phase === 'day') return 'DAY';
+  if (phase === 'golden') return 'GOLDEN HOUR';
   if (phase === 'dusk') return 'DUSK';
   return 'NIGHT';
 }
@@ -26,25 +31,48 @@ function smooth(a, b, t) {
 
 export function daylight(t) {
   // 0 at night, smooth ramps through dawn (05:00–07:00) and dusk (18:00–21:00).
+  // At the 18:05 golden-hour start the light is still high — warm, not dark.
   if (t < 300 || t >= 1260) return 0;
   if (t < 420) return smooth(300, 420, t);
   if (t < 1080) return 1;
   return 1 - smooth(1080, 1260, t);
 }
 
+// 0 outside golden hour, 1 at its heart (18:15), smooth shoulders.
+export function goldenFactor(t) {
+  if (t < GOLDEN_START || t > GOLDEN_END) return 0;
+  const mid = (GOLDEN_START + GOLDEN_END) / 2;
+  const half = (GOLDEN_END - GOLDEN_START) / 2;
+  const d = 1 - Math.abs(t - mid) / half;
+  return d * d * (3 - 2 * d);
+}
+
+// Shadow length multiplier: 1 at noon, ~3.2x at golden hour, 0 at night.
+export function shadowStretch(t) {
+  const light = daylight(t);
+  if (light <= 0.02) return 0;
+  return 1 + goldenFactor(t) * 2.4;
+}
+
 export function skyState(t) {
   const light = daylight(t);
   const phase = dayPhase(t);
+  const golden = goldenFactor(t);
   let horizon = '#1a2440';
-  if (phase === 'dawn' || phase === 'dusk') horizon = '#c97a35';
+  if (phase === 'dawn') horizon = '#c97a35';
+  else if (phase === 'golden') horizon = '#ff7a3d';
+  else if (phase === 'dusk') horizon = '#b34a6e';
   else if (phase === 'night') horizon = '#0a1030';
   return {
     light,
     phase,
+    golden,
     nightAlpha: 0.30 * (1 - light),
-    lampGlow: 0.16 + 0.14 * (1 - light),
+    // Warm wash over the whole frame while the sun is low.
+    warmAlpha: 0.12 * golden,
+    lampGlow: 0.16 + 0.14 * (1 - light) + 0.05 * golden,
     lampRadius: 26 + 18 * (1 - light),
-    neonBoost: 0.55 + 0.45 * (1 - light),
+    neonBoost: 0.55 + 0.45 * (1 - light) + 0.25 * golden,
     starAlpha: Math.max(0, 0.9 - light * 1.6),
     horizon,
   };
@@ -129,14 +157,16 @@ export function drawSun(ctx, state, width) {
   const light = daylight(state.timeOfDay);
   if (light <= 0.02) return;
   const pos = sunPosition(state.timeOfDay, width);
+  const golden = goldenFactor(state.timeOfDay);
   ctx.save();
-  ctx.globalAlpha = 0.25 * light;
-  ctx.fillStyle = '#ffd76a';
-  ctx.beginPath(); ctx.arc(pos.x, pos.y, 44, 0, Math.PI * 2); ctx.fill();
+  // Golden-hour sun: bigger, lower, orange — it hangs over the harbour.
+  const r = 26 + golden * 22;
+  ctx.globalAlpha = (0.25 + golden * 0.25) * light;
+  ctx.fillStyle = golden > 0.3 ? '#ff8a3d' : '#ffd76a';
+  ctx.beginPath(); ctx.arc(pos.x, Math.min(190, pos.y + golden * 60), 44 + golden * 26, 0, Math.PI * 2); ctx.fill();
   ctx.globalAlpha = 0.9 * light;
-  ctx.beginPath(); ctx.arc(pos.x, pos.y, 26, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = '#fff3c0';
-  ctx.beginPath(); ctx.arc(pos.x, pos.y, 17, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = golden > 0.3 ? '#ffab5e' : '#fff3c0';
+  ctx.beginPath(); ctx.arc(pos.x, Math.min(190, pos.y + golden * 60), r, 0, Math.PI * 2); ctx.fill();
   ctx.restore();
 }
 

@@ -1,13 +1,15 @@
 // Keyboard + mouse input. WASD/arrows move and drive, mouse aims, click or Space
-// shoots, E enters/exits a car, Shift runs (and fires the nitro while driving),
-// M toggles sound, Esc/P pauses, G opens the garage, digits 1–9 buy in the
-// garage or switch between owned guns (1–4).
+// shoots, E enters/exits a car (or opens a shop when one is near), Shift runs
+// (and fires the nitro while driving), M toggles sound, R changes the radio
+// station, Esc/P pauses, G opens the garage, digits 1–9 buy in the garage or
+// shop or switch between owned guns (1–4).
 export const ACTION_CONFIRM = 1;
 export const ACTION_PAUSE = 2;
 export const ACTION_ENTER_CAR = 4;
 export const ACTION_MUTE = 8;
 export const ACTION_HONK = 16;
 export const ACTION_GARAGE = 32;
+export const ACTION_RADIO = 64;
 
 const UP = new Set(['KeyW', 'ArrowUp']);
 const DOWN = new Set(['KeyS', 'ArrowDown']);
@@ -30,8 +32,10 @@ export function createInput(canvas) {
       if (event.code === 'KeyM') actions |= ACTION_MUTE;
       if (event.code === 'KeyH') actions |= ACTION_HONK;
       if (event.code === 'KeyG') actions |= ACTION_GARAGE;
-      // Digit keys 1–9: garage purchases while the garage is open, gun
-      // switching (1–4) while playing. Only the latest press is kept.
+      if (event.code === 'KeyR') actions |= ACTION_RADIO;
+      // Digit keys 1–9: garage purchases while the garage is open, shop
+      // purchases while a shop is open, gun switching (1–4) while playing.
+      // Only the latest press is kept.
       if (/^Digit[1-9]$/.test(event.code)) lastDigit = Number(event.code.slice(5));
     }
   });

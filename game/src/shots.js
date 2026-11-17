@@ -1,7 +1,8 @@
 // Deterministic screenshot scenes behind ?shot=start|play|chase|win&seed=N.
 // Each one plays the real game forward from a fresh world with a scripted
 // autopilot, so the frame is what real play looks like and the same seed
-// always gives the same frame.
+// always gives the same frame. Round 5: golden-hour light, a dense coast city,
+// and the Day 3 finale in the win shot.
 import { SCREEN_PLAY, SCREEN_TITLE, SCREEN_WIN } from './render.js';
 import { addWanted } from './player.js';
 import { makeCar } from './traffic.js';
@@ -28,12 +29,13 @@ function walkForward(state, seconds) {
 export function stageShot(name, state) {
   state.reset();
   if (name === 'start') {
+    // Attract mode in miniature: 4 s of living city, then the title over it.
     walkForward(state, 4);
     return { screen: SCREEN_TITLE };
   }
   if (name === 'chase') {
     // Put Kai in a fast car, wanted level 5, police + heli already closing in.
-    // Round 3: engine Lv2 + nitro fitted, Long Pier Rifle in hand.
+    // Round 5: engine Lv2 + nitro fitted, Long Pier Rifle in hand.
     const car = makeCar(state.player.x + 40, state.player.y, 0, CAR_MODELS[1], {});
     state.cars.push(car);
     state.player.inCar = car; state.player.x = car.x; state.player.y = car.y;
@@ -48,9 +50,11 @@ export function stageShot(name, state) {
     return { screen: SCREEN_PLAY };
   }
   if (name === 'win') {
-    state.missions.index = 6; state.missions.done = true;
-    state.player.money = 14850; state.score = 32400;
-    // Round 3: a fully kitted-out garage and every gun owned.
+    // Day 3 finale complete: all 12 missions done, the Harbor Vault score in.
+    state.missions.index = 12; state.missions.done = true;
+    state.player.money = 24850; state.score = 68400;
+    state.day = 3;
+    // Round 5: a fully kitted-out garage and every gun owned.
     state.garage.upgrades.engine = 3; state.garage.upgrades.armor = 2; state.garage.upgrades.nitro = 1;
     state.garage.paint = 3; state.garage.ownedPaints = [0, 1, 3];
     for (const id of ['smg', 'shotgun', 'rifle']) state.weapons.owned[id] = true;
@@ -60,9 +64,9 @@ export function stageShot(name, state) {
     walkForward(state, 2);
     return { screen: SCREEN_WIN };
   }
-  // play: Kai driving through traffic toward mission 1, mid-action.
-  // Round 3: starts at the garage door with the SMG, drives 3.5 s east past
-  // Virelia Motors so the garage marker and the weapon HUD show in the frame.
+  // play: Kai driving through golden-hour traffic toward mission 1, mid-action.
+  // Round 5: starts at the garage door with the SMG, drives 3.5 s east past
+  // Virelia Motors so the garage marker, shop signs and the weapon HUD show.
   state.player.x = 470; state.player.y = 388;
   state.weapons.owned.smg = true; state.weapons.current = 'smg'; state.weapons.ammo.smg = 182;
   const car = makeCar(state.player.x + 40, state.player.y, 0, CAR_MODELS[0], {});

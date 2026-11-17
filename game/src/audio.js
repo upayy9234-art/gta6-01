@@ -1,9 +1,17 @@
 // Procedural WebAudio: no audio files. Tiny synth blips for shots, crashes and
 // mission jingles, plus a slow looping bassline that plays while driving.
 // Everything is created lazily on the first user gesture.
+// Radio: each station has a track list (see radio.js); the bassline swaps its
+// root note per station so the music follows the dial.
+import { RADIO_STATIONS } from './config.js';
+
+export const RADIO_TRACKS = RADIO_STATIONS.flatMap((st) => st.tracks.map((t) => st.name + ' · ' + t));
+
 export function createAudio() {
   let ctx = null; let muted = false; let musicTimer = 0; let note = 0;
   const bass = [55, 55, 65.41, 49, 55, 55, 82.41, 73.42];
+  // One bass root per station: VNL low and warm, WAVE brighter, VPD terse.
+  const stationRoots = [55, 65.41, 49];
 
   function ensure() {
     if (!ctx) {
@@ -50,14 +58,18 @@ export function createAudio() {
     crate() { tone(90, 0.22, 'sawtooth', 0.14); noise(0.12, 0.1); },
     // Filtered-noise whoosh while the nitro is burning.
     nitro() { noise(0.35, 0.06); tone(220, 0.3, 'sawtooth', 0.04); tone(440, 0.28, 'sawtooth', 0.03, 0.1); },
+    // Radio dial click + a short station-ident jingle when the station changes.
+    tune() { noise(0.06, 0.08); tone(1046, 0.1, 'triangle', 0.09, 0.05); tone(1318, 0.14, 'triangle', 0.09, 0.15); },
     win() { [523, 659, 784, 1046, 1318].forEach((f, i) => tone(f, 0.3, 'triangle', 0.14, i * 0.13)); },
-    update(dt, driving) {
+    update(dt, driving, station = 0) {
       if (muted) return;
       musicTimer -= dt;
       if (musicTimer <= 0) {
         musicTimer = driving ? 0.42 : 0.85;
-        tone(bass[note % bass.length], 0.35, 'triangle', driving ? 0.06 : 0.035);
-        if (note % 4 === 2) tone(bass[note % bass.length] * 2, 0.15, 'sine', 0.03);
+        const root = stationRoots[station % stationRoots.length] ?? 55;
+        const f = bass[note % bass.length] * (root / 55);
+        tone(f, 0.35, 'triangle', driving ? 0.06 : 0.035);
+        if (note % 4 === 2) tone(f * 2, 0.15, 'sine', 0.03);
         note += 1;
       }
     },

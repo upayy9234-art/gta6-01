@@ -1,16 +1,18 @@
-// Missions and story: six sequential jobs for fixer Mara Voss, each with a
-// glowing waypoint, an on-screen objective, and a cash reward. Progress saves.
-// Jobs 1–4 live here; jobs 5–6 (Portside docks, the last stand) live in
-// missions2.js and plug in when the mission index reaches 4.
+// Missions and story: twelve sequential jobs for fixer Mara Voss across three
+// days, each with a glowing waypoint, an on-screen objective, and a cash reward.
+// Progress saves. Jobs 1–4 live here; jobs 5–6 (Portside docks, the last stand)
+// live in missions2.js; jobs 7–12 (Day 3, the Harbor Vault heist finale) live
+// in missions3.js. The HUD always shows "MISSION n/12" plus the stage.
 import { MISSIONS, MISSION_REWARD, WORLD } from './config.js';
 import { makeCar } from './traffic.js';
 import { updateExtraMissions, extraMissionWaypoint, extraMissionProgressText } from './missions2.js';
+import { updateDay3Missions, day3Waypoint, day3ProgressText } from './missions3.js';
 
 export const MISSION_WAYPOINTS = [
   { x: 3120, y: 668 },   // East Pier (across the north bridge)
   { x: 1500, y: 1200 },  // Dario's escape route, mid-city
   { x: 824, y: 1696 },   // Harbor Vault, south-west intersection
-  { x: 1042, y: 800 },  // Neon Strip casino entrance (road south of the casino)
+  { x: 1042, y: 800 },   // Neon Strip casino entrance (road south of the casino)
 ];
 export const HIDEOUT = { x: 420, y: 420 };
 
@@ -20,9 +22,20 @@ export function createMissions() {
 
 export function currentMission(missions) { return MISSIONS[missions.index] ?? null; }
 
+// "MISSION 7/12 — THE CREW CALLS" for the panel header.
+export function missionCounterText(state) {
+  const m = state.missions;
+  if (m.done) return 'MISSION 12/12 — DONE';
+  const mission = MISSIONS[m.index];
+  const day = mission ? mission.day : 1;
+  return 'MISSION ' + (m.index + 1) + '/12 · DAY ' + day + ' — ' + (mission ? mission.title.replace(/^MISSION \d+ — /, '') : '');
+}
+
 export function missionWaypoint(state) {
   const m = state.missions;
   if (m.done) return null;
+  // Jobs 7–12 are owned by missions3.js (Day 3 heist steps).
+  if (m.index >= 6) return day3Waypoint(state);
   // Jobs 5–6 are owned by missions2.js (Portside crates, the last stand).
   if (m.index >= 4) return extraMissionWaypoint(state);
   if (m.index === 1 && m.targetCar) return { x: m.targetCar.x, y: m.targetCar.y };
@@ -42,6 +55,8 @@ export function startMissionTwo(state, random) {
 export function updateMissions(state, dt) {
   const m = state.missions;
   if (m.done) return;
+  // Day 3 (jobs 7–12) is owned by missions3.js — hand the update over.
+  if (m.index >= 6) { updateDay3Missions(state, dt); return; }
   // Jobs 5–6 are owned by missions2.js — hand the whole update over.
   if (m.index >= 4) { updateExtraMissions(state, dt); return; }
   const p = state.player;
@@ -85,7 +100,7 @@ export function updateMissions(state, dt) {
   }
 }
 
-function completeMission(state, message) {
+export function completeMission(state, message) {
   const m = state.missions;
   const reward = MISSION_REWARD[m.index] ?? 0;
   state.player.money += reward;
@@ -101,15 +116,21 @@ function completeMission(state, message) {
   } else if (m.index === 1) {
     startMissionTwo(state, state.random);
   }
+  // A finished mission is a save point: progress survives a reload.
+  if (typeof state.saveGame === 'function') state.saveGame();
 }
 
 export function missionProgressText(state) {
   const m = state.missions;
-  if (m.done) return 'ALL MISSIONS COMPLETE';
+  if (m.done) return 'ALL 12 MISSIONS COMPLETE — VIRELIA IS YOURS';
+  // Day 3 reports its own step progress ("STAGE 2/3").
+  if (m.index >= 6) return day3ProgressText(state);
   // Jobs 5–6 report their own progress (crates secured, VPD cars down).
   if (m.index >= 4) return extraMissionProgressText(state);
   const mission = MISSIONS[m.index];
-  if ((m.index === 2 || m.index === 3) && m.stage === 'escape') return 'ESCAPE TO THE HIDEOUT!';
-  if ((m.index === 2 || m.index === 3) && m.stage === 'grab') return 'GRAB THE CASH!';
+  if ((m.index === 2 || m.index === 3) && m.stage === 'escape') return 'STAGE 3/3 · ESCAPE TO THE HIDEOUT!';
+  if ((m.index === 2 || m.index === 3) && m.stage === 'grab') return 'STAGE 2/3 · GRAB THE CASH!';
+  if (m.index === 1) return 'STAGE 1/2 · STOP DARIO’S COUPE';
+  if (m.index === 0) return 'STAGE 1/1 · ' + mission.objective;
   return mission.objective;
 }

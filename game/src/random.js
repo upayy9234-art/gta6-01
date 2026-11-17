@@ -1,5 +1,5 @@
 // Seeded random number generator (mulberry32) so the city and every screenshot
-// scene are reproducible from one seed.
+// scene are reproducible from one seed. Same seed, same Virelia — every time.
 export function createRandom(seed) {
   let a = seed >>> 0;
   return {
@@ -26,5 +26,18 @@ export function createRandom(seed) {
       }
       return list;
     },
+    // A random compass angle, handy for spawning patrol cars around the player.
+    angle() { return this.next() * Math.PI * 2; },
+    // Roughly bell-shaped pick in [min, max] (average of two uniforms).
+    bell(min, max) { return (this.next() + this.next()) / 2 * (max - min) + min; },
   };
+}
+
+// Cheap deterministic hash for stable per-object flicker (neon signs, waves):
+// same id + same time bucket, same value — no per-frame random stream use.
+export function hash01(id, bucket) {
+  let h = (id * 2654435761 + bucket * 40503) >>> 0;
+  h = Math.imul(h ^ (h >>> 15), 2246822519) >>> 0;
+  h = Math.imul(h ^ (h >>> 13), 3266489917) >>> 0;
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }

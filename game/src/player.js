@@ -1,5 +1,6 @@
 // Player state: on-foot movement with mouse aim, shooting, entering/exiting cars,
 // health, money and the wanted level. Driving physics live in traffic.js.
+// Shops heal Kai (see shops.js); the garage tunes his cars (see garage.js).
 import { PLAYER, WORLD } from './config.js';
 import { collideBuildings, isInWater, isOnRoad } from './world.js';
 
@@ -7,7 +8,7 @@ export function createPlayer(x, y) {
   return {
     x, y, angle: -Math.PI / 2, speed: 0, health: PLAYER.health, money: 250,
     wanted: 0, wantedTimer: 0, inCar: null, fireCooldown: 0, invulnerable: 0,
-    moving: false, onFoot: true, dead: false,
+    moving: false, onFoot: true, dead: false, meals: 0,
   };
 }
 
@@ -42,6 +43,16 @@ export function spendCash(player, amount) {
   if (player.money < amount) return false;
   player.money -= amount;
   return true;
+}
+
+// Eating at the diner or the mart: heals now, and a full belly slows the
+// next regen tick a little — flavour, not a penalty that matters.
+export function healPlayer(player, amount) {
+  if (player.health >= PLAYER.health) return 0;
+  const healed = Math.min(PLAYER.health - player.health, amount);
+  player.health += healed;
+  player.meals += 1;
+  return healed;
 }
 
 export function regenHealth(player, dt) {

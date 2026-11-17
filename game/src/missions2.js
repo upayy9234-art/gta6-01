@@ -1,8 +1,8 @@
-// Missions 5 and 6 — the second half of Kai Mercer's story. Mission 5 sends
-// him into the Portside docks to lift three crates; mission 6 is the last
-// stand: survive the full fury of the VPD, put six of their cars down, and
-// run for the East Pier. Missions 1–4 live in missions.js; this module plugs
-// in when state.missions.index reaches 4.
+// Missions 5 and 6 — the second half of Day 2 in Kai Mercer's story. Mission 5
+// sends him into the Portside docks to lift three crates; mission 6 is the last
+// stand: survive the full fury of the VPD, put six of their cars down, and run
+// for the East Pier. Missions 1–4 live in missions.js; missions 7–12 (Day 3)
+// live in missions3.js; this module plugs in when state.missions.index is 4–5.
 import { MISSION_REWARD, MISSIONS } from './config.js';
 import { PORTSIDE, nextCrate } from './district.js';
 
@@ -137,23 +137,25 @@ export function completeExtraMission(state, message) {
     state.screen = 'win';
     state.audio?.win();
   }
+  // A finished mission is a save point: progress survives a reload.
+  if (typeof state.saveGame === 'function') state.saveGame();
 }
 
 export function extraMissionProgressText(state) {
   const m = state.missions;
   const ex = state.extra;
-  if (m.done) return 'ALL MISSIONS COMPLETE';
+  if (m.done) return 'ALL 12 MISSIONS COMPLETE';
   if (m.index === 4) {
-    if (ex.stage === 'escape') return 'ESCAPE TO THE HIDEOUT!';
-    return 'Secure the Portside crates — ' + ex.cratesCollected + '/3';
+    if (ex.stage === 'escape') return 'STAGE 2/2 · ESCAPE TO THE HIDEOUT!';
+    return 'STAGE 1/2 · Secure the Portside crates — ' + ex.cratesCollected + '/3';
   }
   if (m.index === 5) {
-    if (ex.stage === 'escape') return 'ESCAPE TO THE EAST PIER!';
-    return 'Survive the last stand — ' + ex.kills + '/' + LAST_STAND_KILLS + ' VPD cars down';
+    if (ex.stage === 'escape') return 'STAGE 2/2 · ESCAPE TO THE EAST PIER!';
+    return 'STAGE 1/2 · Survive the last stand — ' + ex.kills + '/' + LAST_STAND_KILLS + ' VPD cars down';
   }
   return '';
 }
 
 export function extraMissionBriefings() {
-  return MISSIONS.slice(4);
+  return MISSIONS.slice(4, 6);
 }
