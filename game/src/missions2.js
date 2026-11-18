@@ -21,6 +21,12 @@ export function createExtraMissions() {
   };
 }
 
+// Same bad-weather score bonus as the Day 1 jobs: rain +50, storm +100.
+export function extraWeatherBonus(state) {
+  const kind = state.weather?.kind ?? 'clear';
+  return kind === 'storm' ? 100 : kind === 'rain' ? 50 : 0;
+}
+
 function playerPosition(state) {
   const p = state.player;
   return p.inCar ? { x: p.inCar.x, y: p.inCar.y } : { x: p.x, y: p.y };
@@ -128,7 +134,7 @@ export function completeExtraMission(state, message) {
   state.player.money += reward;
   m.banner = message;
   state.audio?.mission();
-  state.score += 1000 * (m.index + 1);
+  state.score += 1000 * (m.index + 1) + extraWeatherBonus(state);
   m.index += 1;
   m.stage = 'go'; m.targetCar = null; m.timer = 0;
   state.extra = createExtraMissions();

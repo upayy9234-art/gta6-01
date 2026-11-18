@@ -53,7 +53,11 @@ export function drawCoast(ctx, state) {
   ctx.fillStyle = 'rgba(160,120,70,0.55)';
   const wet = 8 + Math.sin(t * 0.7) * 4;
   ctx.fillRect(COAST.beachX1 - wet, 0, wet, WORLD.height);
-  // Ocean: deep blue with three rolling wave lines.
+  // Ocean: deep blue with three rolling wave lines. Storms throw the sea
+  // highest and fastest; rain lifts it a little; calm days keep it gentle.
+  const kind = state.weather?.kind ?? 'clear';
+  const waveAmp = kind === 'storm' ? 24 : kind === 'rain' ? 18 : 14;
+  const waveSpeed = kind === 'storm' ? 1.6 : kind === 'rain' ? 1.2 : 0.9;
   ctx.fillStyle = '#1d6f9e';
   ctx.fillRect(COAST.waterX, 0, WORLD.width - COAST.waterX, WORLD.height);
   ctx.strokeStyle = 'rgba(232,244,255,0.5)';
@@ -61,7 +65,7 @@ export function drawCoast(ctx, state) {
   for (let w = 0; w < 3; w += 1) {
     ctx.beginPath();
     for (let y = 0; y <= WORLD.height; y += 60) {
-      const x = COAST.waterX + 40 + w * 90 + Math.sin(y * 0.01 + t * 0.9 + w * 2) * 14;
+      const x = COAST.waterX + 40 + w * 90 + Math.sin(y * 0.01 + t * waveSpeed + w * 2) * waveAmp;
       if (y === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     }
     ctx.stroke();

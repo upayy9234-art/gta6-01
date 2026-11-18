@@ -54,10 +54,19 @@ export function shadowStretch(t) {
   return 1 + goldenFactor(t) * 2.4;
 }
 
-export function skyState(t) {
+export function skyState(t, weather) {
   const light = daylight(t);
   const phase = dayPhase(t);
-  const golden = goldenFactor(t);
+  let golden = goldenFactor(t);
+  let nightAlpha = 0.30 * (1 - light);
+  // Weather reads through the sky: storms darken and kill the golden hour,
+  // rain dims it, fog hazes it — and stars only come out on a clear sky.
+  const kind = weather?.kind ?? 'clear';
+  let starAlpha = Math.max(0, 0.9 - light * 1.6);
+  if (kind === 'storm') { nightAlpha += 0.22; golden *= 0.25; }
+  else if (kind === 'rain') { nightAlpha += 0.12; golden *= 0.4; }
+  else if (kind === 'fog') { nightAlpha += 0.06; golden *= 0.7; }
+  if (kind !== 'clear') starAlpha = 0;
   let horizon = '#1a2440';
   if (phase === 'dawn') horizon = '#c97a35';
   else if (phase === 'golden') horizon = '#ff7a3d';
@@ -67,13 +76,13 @@ export function skyState(t) {
     light,
     phase,
     golden,
-    nightAlpha: 0.30 * (1 - light),
+    nightAlpha,
     // Warm wash over the whole frame while the sun is low.
     warmAlpha: 0.12 * golden,
     lampGlow: 0.16 + 0.14 * (1 - light) + 0.05 * golden,
     lampRadius: 26 + 18 * (1 - light),
     neonBoost: 0.55 + 0.45 * (1 - light) + 0.25 * golden,
-    starAlpha: Math.max(0, 0.9 - light * 1.6),
+    starAlpha,
     horizon,
   };
 }
@@ -112,7 +121,7 @@ export function updateDayNight(state) {
 }
 
 export function drawStars(ctx, state, w, h) {
-  const sky = skyState(state.timeOfDay);
+  const sky = skyState(state.timeOfDay, state.weather);
   if (sky.starAlpha <= 0.02) return;
   const stars = starPositions(90, w, h);
   ctx.save();
@@ -126,7 +135,7 @@ export function drawStars(ctx, state, w, h) {
 }
 
 export function drawMoon(ctx, state, width) {
-  const sky = skyState(state.timeOfDay);
+  const sky = skyState(state.timeOfDay, state.weather);
   if (sky.starAlpha <= 0.05) return;
   const mx = width - 190, my = 96;
   ctx.save();
@@ -158,13 +167,16 @@ export function drawSun(ctx, state, width) {
   if (light <= 0.02) return;
   const pos = sunPosition(state.timeOfDay, width);
   const golden = goldenFactor(state.timeOfDay);
+  // Weather dims the sun: a storm nearly swallows it, rain halves it.
+  const kind = state.weather?.kind ?? 'clear';
+  const dim = kind === 'storm' ? 0.45 : kind === 'rain' ? 0.65 : 1;
   ctx.save();
   // Golden-hour sun: bigger, lower, orange — it hangs over the harbour.
   const r = 26 + golden * 22;
-  ctx.globalAlpha = (0.25 + golden * 0.25) * light;
+  ctx.globalAlpha = (0.25 + golden * 0.25) * light * dim;
   ctx.fillStyle = golden > 0.3 ? '#ff8a3d' : '#ffd76a';
   ctx.beginPath(); ctx.arc(pos.x, Math.min(190, pos.y + golden * 60), 44 + golden * 26, 0, Math.PI * 2); ctx.fill();
-  ctx.globalAlpha = 0.9 * light;
+  ctx.globalAlpha = 0.9 * light * dim;
   ctx.fillStyle = golden > 0.3 ? '#ffab5e' : '#fff3c0';
   ctx.beginPath(); ctx.arc(pos.x, Math.min(190, pos.y + golden * 60), r, 0, Math.PI * 2); ctx.fill();
   ctx.restore();

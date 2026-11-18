@@ -1,5 +1,6 @@
 // Keyboard + mouse input. WASD/arrows move and drive, mouse aims, click or Space
-// shoots, E enters/exits a car (or opens a shop when one is near), Shift runs
+// shoots, E closes an open shop, then picks up a waiting taxi passenger, then
+// enters/exits a car (or opens a shop when one is near), Shift runs
 // (and fires the nitro while driving), M toggles sound, R changes the radio
 // station, Esc/P pauses, G opens the garage, digits 1–9 buy in the garage or
 // shop or switch between owned guns (1–4).

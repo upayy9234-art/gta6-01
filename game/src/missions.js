@@ -22,6 +22,14 @@ export function createMissions() {
 
 export function currentMission(missions) { return MISSIONS[missions.index] ?? null; }
 
+// Finishing a job in bad weather pays a score bonus — rain +50, storm +100.
+// Cash never changes; the bonus is reputation for working through the worst
+// of Virelia's weather.
+export function missionWeatherBonus(state) {
+  const kind = state.weather?.kind ?? 'clear';
+  return kind === 'storm' ? 100 : kind === 'rain' ? 50 : 0;
+}
+
 // "MISSION 7/12 — THE CREW CALLS" for the panel header.
 export function missionCounterText(state) {
   const m = state.missions;
@@ -106,7 +114,7 @@ export function completeMission(state, message) {
   state.player.money += reward;
   m.banner = message;
   state.audio?.mission();
-  state.score += 1000 * (m.index + 1);
+  state.score += 1000 * (m.index + 1) + missionWeatherBonus(state);
   m.index += 1;
   m.stage = 'go'; m.targetCar = null; m.timer = 0;
   if (m.index >= MISSIONS.length) {

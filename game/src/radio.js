@@ -29,6 +29,34 @@ function dispatchLine(radio) {
   return 'VPD DISPATCH · ' + RADIO_DISPATCH[radio.line % RADIO_DISPATCH.length];
 }
 
+// Weather reports on the dispatch channel: two variants per kind, picked
+// in turn so the same rain never reads the same way twice. Clear skies are
+// quiet — no report at all.
+const WEATHER_REPORTS = {
+  rain: [
+    'VPD DISPATCH · Rain over the harbour — wet roads, drive careful out there',
+    'VPD DISPATCH · Rain still falling over Virelia — slick streets, slow down',
+  ],
+  storm: [
+    'VPD DISPATCH · Storm warning — lightning over Virelia, all units watch the skies',
+    'VPD DISPATCH · Thunder over the harbour — storm rolling through, stay sharp',
+  ],
+  fog: [
+    'VPD DISPATCH · Fog rolling in off the water — visibility down across the city',
+    'VPD DISPATCH · Fog thick on the boulevard — headlights on, drive slow',
+  ],
+};
+
+export function weatherReportLine(state) {
+  const radio = state.radio;
+  const kind = state.weather?.kind ?? 'clear';
+  const variants = WEATHER_REPORTS[kind];
+  if (!radio || !variants) return '';
+  const idx = (radio.weatherVariant ?? 0) % variants.length;
+  radio.weatherVariant = idx + 1;
+  return variants[idx];
+}
+
 export function updateRadio(state, dt) {
   const radio = state.radio;
   if (!radio) return;
@@ -40,6 +68,9 @@ export function updateRadio(state, dt) {
   if (radio.line % 2 === 0) {
     radio.track += 1;
     radio.current = trackLine(radio);
+  } else if (radio.line % 8 === 7) {
+    // Every fourth dispatch slot carries the weather report instead.
+    radio.current = weatherReportLine(state) || dispatchLine(radio);
   } else {
     radio.current = dispatchLine(radio);
   }

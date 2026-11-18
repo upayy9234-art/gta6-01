@@ -14,6 +14,9 @@ import { drawWeaponPickups } from './weapons.js';
 import { drawGarage, GARAGE_SPOT } from './garage.js';
 import { drawShopPanel } from './shops.js';
 import { heliSpotlightAlpha } from './heli.js';
+import { drawRoadblocks } from './wanted.js';
+import { drawSideMarkers } from './side.js';
+import { fogBlobs, isWet, rainDrops } from './weather.js';
 
 export const SCREEN_TITLE = 'title';
 export const SCREEN_PLAY = 'play';
@@ -49,7 +52,7 @@ export function createRenderer(canvas) {
       // in screen space so the sky always reads, day or night. Golden hour
       // adds a warm sunset gradient over the whole frame instead of the
       // night tint — the first impression must read sunset, not navy dark.
-      const sky = skyState(state.timeOfDay);
+      const sky = skyState(state.timeOfDay, state.weather);
       if (sky.golden > 0.02) {
         const g = ctx.createLinearGradient(0, 0, 0, VIEW.height);
         g.addColorStop(0, 'rgba(255,150,70,' + (0.30 * sky.golden).toFixed(3) + ')');
@@ -66,6 +69,9 @@ export function createRenderer(canvas) {
         ctx.fillStyle = 'rgba(10,12,40,' + sky.nightAlpha.toFixed(3) + ')';
         ctx.fillRect(0, 0, VIEW.width, VIEW.height);
       }
+      // Weather paints over the sky and under the stars: rain streaks and a
+      // wet sheen, drifting fog, and the white flash of lightning.
+      drawWeatherOverlay(ctx, state);
       drawStars(ctx, state, VIEW.width, VIEW.height);
       drawMoon(ctx, state, VIEW.width);
       drawSun(ctx, state, VIEW.width);
@@ -96,8 +102,10 @@ function drawWorld(ctx, state) {
   // Bridges.
   ctx.fillStyle = PALETTE.bridge;
   ctx.fillRect(2900, 620, 500, 96); ctx.fillRect(2900, 1680, 500, 96);
-  // Roads.
-  ctx.fillStyle = golden > 0.3 ? '#38324e' : PALETTE.road;
+  // Roads. Wet roads read darker and cooler — except at golden hour, when
+  // the sunset still owns the asphalt.
+  const wetRoads = isWet(state.weather?.kind ?? 'clear');
+  ctx.fillStyle = golden > 0.3 ? '#38324e' : wetRoads ? '#2d3250' : PALETTE.road;
   for (let x = 388; x < WORLD.width; x += 436) ctx.fillRect(x - WORLD.road / 2, y0, WORLD.road, vh);
   for (let y = 388; y < WORLD.height; y += 436) ctx.fillRect(x0, y - WORLD.road / 2, vw, WORLD.road);
   // Road centre dashes.
@@ -157,7 +165,7 @@ function drawWorld(ctx, state) {
       if ((i * 7 + j * 13 + b.windows) % 3 === 0) ctx.fillRect(b.x + 8 + i * 34, b.y + 10 + j * 34, 12, 16);
     }
     if (b.neon) {
-      const sky = skyState(state.timeOfDay);
+      const sky = skyState(state.timeOfDay, state.weather);
       ctx.fillStyle = b.neon; ctx.globalAlpha = Math.min(1, 0.55 + sky.neonBoost * 0.5);
       ctx.fillRect(b.x + b.w / 2 - 26, b.y - 4, 52, 8);
       ctx.globalAlpha = 1;
@@ -177,7 +185,7 @@ function drawWorld(ctx, state) {
   // District name labels across the map.
   drawDistrictLabels(ctx, state);
   // Street lamps glow — wider and brighter at night, per the day/night sky.
-  const sky = skyState(state.timeOfDay);
+  const sky = skyState(state.timeOfDay, state.weather);
   for (const lamp of state.city.lamps) {
     if (Math.abs(lamp.x - cam.x) > vw / 2 || Math.abs(lamp.y - cam.y) > vh / 2) continue;
     ctx.fillStyle = 'rgba(255,214,106,' + sky.lampGlow.toFixed(3) + ')';
@@ -247,6 +255,10 @@ function drawCar(ctx, car, state) {
 }
 
 function drawEntities(ctx, state) {
+  // Roadblocks and side markers first, so their rings sit under cars and
+  // the player instead of floating over them.
+  drawRoadblocks(ctx, state);
+  drawSideMarkers(ctx, state);
   // Weapon pickups first, so their rings sit under cars and the player.
   drawWeaponPickups(ctx, state);
   // Pedestrians.
@@ -331,6 +343,41 @@ function drawEntities(ctx, state) {
   }
 }
 
+function drawWeatherOverlay(ctx, state) {
+  const weather = state.weather;
+  if (!weather) return;
+  const kind = weather.kind;
+  // Rain and storm: diagonal streaks across the whole frame, plus a faint
+  // sheen on the wet streets below.
+  if (kind === 'rain' || kind === 'storm') {
+    ctx.fillStyle = 'rgba(140,170,220,0.05)';
+    ctx.fillRect(0, 0, VIEW.width, VIEW.height);
+    ctx.strokeStyle = 'rgba(180,200,235,0.45)';
+    ctx.lineWidth = 1.5;
+    for (const drop of rainDrops(state.time, 110, VIEW.width, VIEW.height)) {
+      ctx.beginPath();
+      ctx.moveTo(drop.x - 6, drop.y);
+      ctx.lineTo(drop.x, drop.y + drop.len);
+      ctx.stroke();
+    }
+  }
+  // Fog: slow grey blobs drifting across the frame.
+  if (kind === 'fog') {
+    for (const blob of fogBlobs(state.time, 7, VIEW.width, VIEW.height)) {
+      const g = ctx.createRadialGradient(blob.x, blob.y, 0, blob.x, blob.y, blob.radius);
+      g.addColorStop(0, 'rgba(190,200,220,0.16)');
+      g.addColorStop(1, 'rgba(190,200,220,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(blob.x - blob.radius, blob.y - blob.radius, blob.radius * 2, blob.radius * 2);
+    }
+  }
+  // Lightning: the whole frame flashes white, then fades with the weather.
+  if (weather.flash > 0.02) {
+    ctx.fillStyle = 'rgba(240,244,255,' + (weather.flash * 0.55).toFixed(3) + ')';
+    ctx.fillRect(0, 0, VIEW.width, VIEW.height);
+  }
+}
+
 function readSave() {
   try {
     const raw = window.localStorage.getItem('neon-harbor.save.v1');
@@ -357,9 +404,11 @@ function drawTitle(ctx, state, best) {
   ctx.fillText('Kai Mercer. One last job for fixer Mara Voss — then the Harbor Vault heist.', VIEW.width / 2, 268);
   ctx.fillText('Steal cars, outrun the VPD, rob the Neon Strip casino, raid the Portside docks,', VIEW.width / 2, 292);
   ctx.fillText('eat at Pier 9, tune your ride at Virelia Motors, and take the final score.', VIEW.width / 2, 316);
+  ctx.fillStyle = '#7cc7ff'; ctx.font = '15px system-ui, sans-serif';
+  ctx.fillText('Dodge VPD roadblocks, drive through rain and storms, pick up taxi fares — and find all 10 postcards.', VIEW.width / 2, 340);
   ctx.fillStyle = PALETTE.muted; ctx.font = '15px system-ui, sans-serif';
-  ctx.fillText('WASD move / drive  ·  Mouse aim  ·  Click or Space shoot  ·  E enter car / shop', VIEW.width / 2, 360);
-  ctx.fillText('Shift run / nitro  ·  H honk  ·  G garage  ·  R radio  ·  1–4 switch weapon  ·  Esc pause  ·  M sound', VIEW.width / 2, 384);
+  ctx.fillText('WASD move / drive  ·  Mouse aim  ·  Click or Space shoot  ·  E enter car / shop', VIEW.width / 2, 376);
+  ctx.fillText('Shift run / nitro  ·  H honk  ·  G garage  ·  R radio  ·  1–4 switch weapon  ·  Esc pause  ·  M sound', VIEW.width / 2, 400);
   const save = readSave();
   const pulse = 0.7 + Math.sin(state.time * 3) * 0.3;
   ctx.globalAlpha = pulse;
@@ -405,6 +454,13 @@ function drawWin(ctx, state) {
   ctx.fillText('Kai Mercer walks away from the Harbor Vault with the final score —', VIEW.width / 2, 320);
   ctx.fillText('twelve jobs, three days, one legend. Mara Voss smiles. Virelia is yours now.', VIEW.width / 2, 348);
   ctx.fillText('Final score ' + state.score.toLocaleString('en-US') + '   ·   Cash $' + state.player.money.toLocaleString('en-US'), VIEW.width / 2, 390);
+  // The side hustle's final tally: postcards found, fares banked, cash earned.
+  if (state.side) {
+    ctx.fillStyle = '#ff5e8a'; ctx.font = 'bold 17px system-ui, sans-serif';
+    ctx.fillText('✉ POSTCARDS ' + state.side.collected + '/' + state.side.postcards.length
+      + '   ·   🚕 FARES ' + state.side.faresDone
+      + '   ·   SIDE CASH +$' + state.side.cashEarned.toLocaleString('en-US'), VIEW.width / 2, 422);
+  }
   ctx.fillStyle = PALETTE.neonCyan; ctx.font = 'bold 20px system-ui, sans-serif';
   ctx.fillText('CLICK OR PRESS SPACE TO PLAY AGAIN', VIEW.width / 2, 460);
 }

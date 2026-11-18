@@ -171,4 +171,9 @@ export function drawPortside(ctx, state) {
   }
   // Keep the world width referenced so the district never drifts off-grid.
   void WORLD.width;
+  // Fog rolls in off the water and hangs over the whole yard.
+  if (state.weather?.kind === 'fog') {
+    ctx.fillStyle = 'rgba(180,190,210,0.10)';
+    ctx.fillRect(PORTSIDE.x, PORTSIDE.y, PORTSIDE.w, PORTSIDE.h);
+  }
 }

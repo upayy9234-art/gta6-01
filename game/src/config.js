@@ -23,6 +23,39 @@ export const CAR = {
   maxSpeed: 560, turnRate: 2.6, drag: 0.55, grip: 6.5, health: 160,
 };
 export const WANTED = { decay: 0.045, perCrime: 1, max: 5, chaseSpeed: 500 };
+
+// VPD roadblocks: once the heat hits 3 stars the police seal the road ahead
+// of Kai with parked interceptors, cones and a spike strip.
+export const ROADBLOCK = {
+  MIN_WANTED: 3, MAX_ACTIVE: 2, AHEAD: 480, WARN_DIST: 600,
+  SPAWN_GAP: 6, STRIP_RADIUS: 46, SPIKE_DAMAGE: 12,
+};
+
+// Dynamic weather: the sky rolls through spells of clear, rain, fog and
+// storm, and wet roads grip less. Spells last a couple of game minutes.
+export const WEATHER = { MIN_SPELL: 90, MAX_SPELL: 150 };
+export const WEATHER_GRIP = { clear: 1, rain: 0.82, fog: 0.95, storm: 0.78 };
+
+// Taxi fares and postcards: side income for Kai between missions. Fares pay
+// $150–$400 against the clock; ten hidden postcards pay $150 each.
+export const TAXI = {
+  MAX_WAITING: 3, PICKUP_DIST: 80, DROPOFF_DIST: 80,
+  MIN_TRIP: 500, MAX_TRIP: 1400, SPEED: 200, BASE_TIME: 25,
+  MIN_PAY: 150, MAX_PAY: 400, SCORE: 100, RESPAWN_DELAY: 8,
+  POSTCARD_PAY: 150, POSTCARD_SCORE: 200,
+};
+export const POSTCARD_SPOTS = [
+  { label: 'PALM BOULEVARD', x: 2930, y: 500 },
+  { label: 'HARBOR PARK', x: 1914, y: 1478 },
+  { label: 'EAST PIER', x: 3120, y: 668 },
+  { label: 'NEON STRIP', x: 1042, y: 800 },
+  { label: 'VIRELIA MOTORS', x: 700, y: 388 },
+  { label: 'PORTSIDE DOCKS', x: 2640, y: 2090 },
+  { label: 'OLD TOWN', x: 560, y: 560 },
+  { label: 'UPTOWN', x: 2568, y: 388 },
+  { label: 'HARBOR VAULT', x: 824, y: 1696 },
+  { label: 'NEON MART', x: 1300, y: 860 },
+];
 export const MISSION_REWARD = [400, 900, 2200, 3000, 4200, 6000, 800, 1500, 2600, 1800, 5000, 10000];
 export const GARAGE = { x: 700, y: 388, label: 'VIRELIA MOTORS — GARAGE' };
 export const WEAPON_SHOP = { x: 500, y: 388, label: 'HARBOR ARMS — WEAPONS' };

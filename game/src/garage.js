@@ -248,6 +248,20 @@ export function drawGarage(ctx, state) {
   if (!g.carOfTheDay) g.carOfTheDay = carOfTheDay(state.random);
   ctx.fillStyle = '#9aa3c7'; ctx.font = '13px system-ui, sans-serif';
   ctx.fillText(g.carOfTheDay, x + 28, rowY);
+  // Weather warning from the garage door: the roads outside decide how the
+  // tuned car will actually handle.
+  const kind = state.weather?.kind ?? 'clear';
+  const weatherLine = kind === 'storm'
+    ? '⛈️ Storm outside — grip is down, mind the slick roads.'
+    : kind === 'rain'
+      ? '🌧️ Rain outside — the streets are slick, take it slow.'
+      : kind === 'fog'
+        ? '🌫️ Fog outside — keep your eyes on the road, not the sky.'
+        : '';
+  if (weatherLine) {
+    ctx.fillStyle = '#7cc7ff'; ctx.font = 'bold 13px system-ui, sans-serif';
+    ctx.fillText(weatherLine, x + 28, rowY + 20);
+  }
   ctx.fillStyle = '#f2f4ff'; ctx.font = 'bold 14px system-ui, sans-serif';
   ctx.textAlign = 'center';
   ctx.fillText('Press G to close the garage', x + w / 2, y + h - 30);

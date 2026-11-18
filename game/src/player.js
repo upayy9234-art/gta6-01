@@ -1,7 +1,7 @@
 // Player state: on-foot movement with mouse aim, shooting, entering/exiting cars,
 // health, money and the wanted level. Driving physics live in traffic.js.
 // Shops heal Kai (see shops.js); the garage tunes his cars (see garage.js).
-import { PLAYER, WORLD } from './config.js';
+import { PLAYER, ROADBLOCK, WORLD } from './config.js';
 import { collideBuildings, isInWater, isOnRoad } from './world.js';
 
 export function createPlayer(x, y) {
@@ -60,6 +60,27 @@ export function regenHealth(player, dt) {
   if (player.wanted === 0 && player.health > 0 && player.health < PLAYER.health) {
     player.health = Math.min(PLAYER.health, player.health + 2.5 * dt);
   }
+}
+
+// A VPD spike strip: the car loses a chunk of health and most of its speed
+// at once, then drags on shredded tyres for a while. Called from wanted.js.
+export function carHitSpikeStrip(state, car) {
+  if (!car) return;
+  car.health = Math.max(0, car.health - ROADBLOCK.SPIKE_DAMAGE);
+  car.speed *= 0.45;
+  car.spikeSlow = 1.6;
+  // Shredded rubber and sparks: two bursts, steel blue and warning orange.
+  for (let i = 0; i < 14; i += 1) {
+    const a = state.random.next() * Math.PI * 2;
+    state.particles.push({ x: car.x, y: car.y, vx: Math.cos(a) * 170, vy: Math.sin(a) * 170, life: 0.5, max: 0.5, color: '#c9d2ff', size: 3 });
+  }
+  for (let i = 0; i < 8; i += 1) {
+    const a = state.random.next() * Math.PI * 2;
+    state.particles.push({ x: car.x, y: car.y, vx: Math.cos(a) * 130, vy: Math.sin(a) * 130, life: 0.4, max: 0.4, color: '#ff7a3d', size: 3 });
+  }
+  state.audio?.crash(0.8);
+  state.bannerText = 'Spike strip! Tyres shredded — the car is barely holding together.';
+  state.bannerTimer = 3;
 }
 
 export function decayWanted(player, dt, hidden) {

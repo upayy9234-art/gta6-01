@@ -53,7 +53,14 @@ export function spawnPedestrian(random, state) {
 }
 
 export function updateCarPhysics(car, input, dt, state) {
-  // Player-driven car.
+  // Player-driven car. Wet roads grip less: steering dulls, acceleration
+  // drops and the drag rises, so rain and storm really change the drive.
+  // A car on shredded tyres (spikeSlow) drags and cannot hold its speed.
+  const grip = state.weather?.gripMul ?? 1;
+  if (car.spikeSlow > 0) {
+    car.spikeSlow -= dt;
+    car.speed *= Math.max(0, 1 - 1.1 * dt);
+  }
   const forward = Math.cos(car.angle), right = Math.sin(car.angle);
   void forward; void right;
   let throttle = 0;
@@ -61,9 +68,9 @@ export function updateCarPhysics(car, input, dt, state) {
   else if (input.down()) throttle = car.speed > 5 ? -1 : -0.55;
   const steering = (input.left() ? -1 : 0) + (input.right() ? 1 : 0);
   const dir = car.speed >= 0 ? 1 : -1;
-  car.angle += steering * CAR.turnRate * dt * Math.min(1, Math.abs(car.speed) / 120) * dir;
-  car.speed += throttle * (throttle > 0 ? CAR.accel : CAR.brake) * car.model.speed * dt;
-  car.speed -= car.speed * CAR.drag * dt;
+  car.angle += steering * CAR.turnRate * (0.65 + 0.35 * grip) * dt * Math.min(1, Math.abs(car.speed) / 120) * dir;
+  car.speed += throttle * (throttle > 0 ? CAR.accel : CAR.brake) * car.model.speed * grip * dt;
+  car.speed -= car.speed * CAR.drag * (1 + (1 - grip) * 1.2) * dt;
   // Garage engine upgrades raise the cap; fitted nitro leaves 320 of
   // headroom while Shift is held so the boost is not clamped away.
   const nitroHeadroom = (car.nitroBoost && input.run()) ? 320 : 0;
@@ -94,7 +101,12 @@ export function crashCheck(state, x, y) {
 }
 
 export function updateTrafficCar(car, dt, state, random) {
-  // Cruise along its road; at an intersection sometimes turn.
+  // Cruise along its road; at an intersection sometimes turn. On wet roads
+  // traffic cruises slower — and a car above the wet cruise speed eases
+  // down toward it instead of snapping.
+  const grip = state.weather?.gripMul ?? 1;
+  const wetCruise = 210 * grip;
+  if (car.speed > wetCruise) car.speed += (wetCruise - car.speed) * 0.6 * dt;
   const nearX = roadCentersX().some((cx) => Math.abs(car.x - cx) < 14);
   const nearY = roadCentersY().some((cy) => Math.abs(car.y - cy) < 14);
   if ((nearX || nearY) && random.bool(dt * 0.35)) {

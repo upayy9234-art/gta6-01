@@ -138,7 +138,10 @@ await key('Space', ' ');
 await sleep(400);
 check('game starts on Space', (await evalJs('window.__neonHarbor().screen')) === 'play');
 {
-  await evalJs(`(() => { const s = window.__neonHarbor(); s.player.x = 520; s.player.y = 430; s.player.money = 1000; s.player.inCar = null; })()`);
+  // Move the waiting taxi passengers far from the shop first: E tries a
+  // taxi pickup before opening a shop, so a fare camping the shop door
+  // would steal the keypress and this shop scenario would go flaky.
+  await evalJs(`(() => { const s = window.__neonHarbor(); s.player.x = 520; s.player.y = 430; s.player.money = 1000; s.player.inCar = null; for (const f of s.side.fares) { f.x = 2800; f.y = 2000; } })()`);
   await sleep(200);
   await key('KeyE', 'e');
   const open = await evalJs('window.__neonHarbor().shops.open');
@@ -223,6 +226,100 @@ check('game starts on Space', (await evalJs('window.__neonHarbor().screen')) ===
   await evalJs(`(() => { const s = window.__neonHarbor(); s.player.x = 1180; s.player.y = 800; s.player.inCar = null; const input = { up:()=>false, down:()=>false, left:()=>false, right:()=>false, moveX:()=>0, run:()=>false, shooting:()=>false, mouse:()=>({x:640,y:360}) }; for (let i=0;i<10;i++) s.stepWorld(1/60, input); })()`);
   const w = await evalJs('({ owned: window.__neonHarbor().weapons.owned.shotgun, current: window.__neonHarbor().weapons.current, ammo: window.__neonHarbor().weapons.ammo.shotgun })');
   check('weapon pickup: scattergun crate at (1180,800)', w.owned === true && w.current === 'shotgun' && w.ammo === 40, JSON.stringify(w));
+}
+
+// ============ 7b. ROUND 7: roadblocks, weather grip, taxi, postcards ============
+{
+  const step = async (seconds = 0.6) => {
+    await evalJs(`(() => { const s = window.__neonHarbor(); const input = { up:()=>false, down:()=>false, left:()=>false, right:()=>false, moveX:()=>0, run:()=>false, shooting:()=>false, mouse:()=>({x:640,y:360}) }; for (let i=0;i<${Math.round(seconds * 60)};i++) s.stepWorld(1/60, input); })()`);
+  };
+  // Roadblock spawns at wanted 3, stands down below 3.
+  await evalJs(`(() => { const s = window.__neonHarbor(); s.player.wanted = 3; s.player.health = 100; s.roadblocks.spawnCd = 0; })()`);
+  await step(0.5);
+  const rb = await evalJs(`(() => { const s = window.__neonHarbor(); return { blocks: s.roadblocks.list.length, cars: s.cars.filter(c=>c.roadblock).length }; })()`);
+  check('roadblock spawns at wanted 3 (2 interceptors)', rb.blocks >= 1 && rb.cars >= 2, JSON.stringify(rb));
+  await evalJs(`(() => { const s = window.__neonHarbor(); s.player.wanted = 0; s.player.health = 100; })()`);
+  await step(0.3);
+  const rbDown = await evalJs('window.__neonHarbor().roadblocks.list.length');
+  check('roadblocks stand down below wanted 3', rbDown === 0, `blocks=${rbDown}`);
+  // A third block appears once the heat reaches 4 (round 7 escalation).
+  await evalJs(`(() => { const s = window.__neonHarbor(); s.player.wanted = 4; s.player.health = 100; })()`);
+  for (let i = 0; i < 3; i += 1) {
+    await evalJs('window.__neonHarbor().roadblocks.spawnCd = 0');
+    await step(0.3);
+  }
+  const rb3 = await evalJs('window.__neonHarbor().roadblocks.list.length');
+  check('third roadblock appears at wanted 4', rb3 === 3, `blocks=${rb3}`);
+  await evalJs(`(() => { const s = window.__neonHarbor(); s.player.wanted = 0; s.player.health = 100; })()`);
+  await step(0.3);
+  // A second helicopter hunts at wanted 5 (lockdown).
+  await evalJs(`(() => { const s = window.__neonHarbor(); s.player.wanted = 5; s.player.health = 100; })()`);
+  await step(0.5);
+  const helis = await evalJs('window.__neonHarbor().helis.length');
+  check('second heli hunts at wanted 5', helis === 2, `helis=${helis}`);
+  await evalJs(`(() => { const s = window.__neonHarbor(); s.player.wanted = 0; s.player.health = 100; })()`);
+  await step(0.3);
+  // Weather: a spell turns with a banner, and rain grip is really slower.
+  const wx = await evalJs(`(() => { const s = window.__neonHarbor(); s.weather.timer = 0.01; s.weather.kind = 'clear'; const input = { up:()=>false, down:()=>false, left:()=>false, right:()=>false, moveX:()=>0, run:()=>false, shooting:()=>false, mouse:()=>({x:640,y:360}) }; s.stepWorld(1/60, input); return { kind: s.weather.kind, grip: s.weather.gripMul, banner: s.bannerText }; })()`);
+  check('weather spell turns with a banner', wx.kind !== 'clear' && wx.grip >= 0.78 && wx.grip <= 0.95 && wx.banner.length > 5,
+    `${wx.kind} grip=${wx.grip}`);
+  // 12 dummy NPC cars far away keep the traffic top-up quiet during the
+  // grip runs, so no fresh car spawns near the player mid-measurement.
+  await evalJs(`(() => { const s = window.__neonHarbor(); for (let i = 0; i < 12; i += 1) s.cars.push({ x: 600 + i * 200, y: 2000, angle: 0, speed: 0, health: 160, maxHealth: 160, model: { name: 'Dummy', color: '#888888', speed: 1 }, npc: true, police: false, driver: true }); })()`);
+  const driveSpeed = async (kind, grip) => {
+    return await evalJs(`(() => {
+      const s = window.__neonHarbor();
+      s.weather.kind = '${kind}'; s.weather.gripMul = ${grip}; s.weather.timer = 999;
+      const car = { x: 500, y: 388, angle: 0, speed: 0, health: 160, maxHealth: 160, model: { name: 'Test', color: '#ffffff', speed: 1 }, npc: false, police: false, driver: true, nitroBoost: false };
+      s.player.inCar = car; s.player.x = 500; s.player.y = 388;
+      const input = { up:()=>true, down:()=>false, left:()=>false, right:()=>false, moveX:()=>0, run:()=>false, shooting:()=>false, mouse:()=>({x:640,y:360}) };
+      for (let i=0;i<30;i++) s.stepWorld(1/60, input);
+      const v = car.speed;
+      s.player.inCar = null;
+      return v;
+    })()`);
+  };
+  const drySpeed = await driveSpeed('clear', 1);
+  const rainSpeed = await driveSpeed('rain', 0.82);
+  check('rain grip: 0.5 s full throttle is slower by 15+', rainSpeed < drySpeed - 15, `dry=${drySpeed.toFixed(0)} rain=${rainSpeed.toFixed(0)}`);
+  // Taxi: mark the nearest waiting passenger VIP, press E to pick them up.
+  await evalJs(`(() => { const s = window.__neonHarbor(); const f = s.side.fares.find((x) => x.waiting); if (f) f.vip = true; })()`);
+  await evalJs(`(() => { const s = window.__neonHarbor(); const f = s.side.fares.find((x) => x.waiting); s.player.x = f.x; s.player.y = f.y; s.player.inCar = null; s.player.health = 100; })()`);
+  await key('KeyE', 'e');
+  await sleep(400);
+  const picked = await evalJs(`(() => { const s = window.__neonHarbor(); const f = s.side.activeFare; return f ? { pay: f.pay, timer: f.timer, vip: f.vip } : null; })()`);
+  check('E picks up a waiting taxi passenger', picked !== null && picked.vip === true, JSON.stringify(picked));
+  const vipPay = await evalJs(`(() => { const s = window.__neonHarbor(); const f = s.side.activeFare; const d = Math.hypot(f.dest.x - f.x, f.dest.y - f.y); const base = Math.min(400, Math.max(150, Math.round((150 + d * 0.22) / 10) * 10)); return { pay: f.pay, expected: Math.min(800, base * 2), timer: f.timer, expectedTimer: (d / 200 + 25) * 0.8 }; })()`);
+  check('VIP fare pays double on a tighter clock', vipPay.pay === vipPay.expected && vipPay.timer <= vipPay.expectedTimer + 0.01 && vipPay.timer > vipPay.expectedTimer - 3,
+    JSON.stringify(vipPay));
+  // Drop-off: teleport to the flag and the fare pays out.
+  const moneyBeforeDrop = await evalJs('window.__neonHarbor().player.money');
+  const doneBefore = await evalJs('window.__neonHarbor().side.faresDone');
+  await evalJs(`(() => { const s = window.__neonHarbor(); const f = s.side.activeFare; if (f) { s.player.x = f.dest.x; s.player.y = f.dest.y; } })()`);
+  await sleep(500);
+  const dropped = await evalJs(`({ done: window.__neonHarbor().side.faresDone, money: window.__neonHarbor().player.money, active: window.__neonHarbor().side.activeFare })`);
+  check('taxi drop-off pays the fare', dropped.done === doneBefore + 1 && dropped.active === null && dropped.money > moneyBeforeDrop, JSON.stringify(dropped));
+  // Postcard: Palm Boulevard if it is still out there, else the first one
+  // left — either way the card pays +$150 exactly once.
+  const pcSpot = await evalJs(`(() => { const s = window.__neonHarbor(); const c = s.side.postcards.find((x) => x.label === 'PALM BOULEVARD' && !x.taken) ?? s.side.postcards.find((x) => !x.taken); return c ? { x: c.x, y: c.y, label: c.label } : null; })()`);
+  const pc0 = await evalJs(`({ collected: window.__neonHarbor().side.collected, money: window.__neonHarbor().player.money })`);
+  await evalJs(`(() => { const s = window.__neonHarbor(); s.player.x = ${pcSpot.x}; s.player.y = ${pcSpot.y}; s.player.inCar = null; })()`);
+  await sleep(500);
+  const pc1 = await evalJs(`({ collected: window.__neonHarbor().side.collected, money: window.__neonHarbor().player.money })`);
+  check(`postcard ${pcSpot.label} pays +$150`, pc1.collected === pc0.collected + 1 && pc1.money === pc0.money + 150, JSON.stringify(pc1));
+  // The tenth postcard pays the $1000 hunter bonus on top of its $150.
+  const bonus = await evalJs(`(() => {
+    const s = window.__neonHarbor();
+    s.side.postcards.forEach((c, i) => { if (i < 9) c.taken = true; });
+    s.side.collected = 9; s.side.hunterBonusPaid = false;
+    const last = s.side.postcards[9];
+    s.player.x = last.x; s.player.y = last.y; s.player.inCar = null;
+    return { money: s.player.money, score: s.score };
+  })()`);
+  await sleep(500);
+  const bonusAfter = await evalJs(`({ collected: window.__neonHarbor().side.collected, money: window.__neonHarbor().player.money, score: window.__neonHarbor().score, hunter: window.__neonHarbor().side.hunterBonusPaid })`);
+  check('tenth postcard pays the $1000 hunter bonus', bonusAfter.collected === 10 && bonusAfter.hunter === true
+    && bonusAfter.money === bonus.money + 1150 && bonusAfter.score === bonus.score + 1200, JSON.stringify(bonusAfter));
 }
 
 check('no console errors during play', consoleErrors.length === 0, consoleErrors.join(' | ').slice(0, 400));

@@ -102,8 +102,11 @@ export function fireWeapon(player, state) {
   player.fireCooldown = weapon.interval;
   const ox = player.x + Math.cos(player.angle) * 22;
   const oy = player.y + Math.sin(player.angle) * 22;
+  // Wet hands, wet gun: rain and storm widen the spread — storm worst.
+  const kind = state.weather?.kind ?? 'clear';
+  const spreadMul = kind === 'storm' ? 1.5 : kind === 'rain' ? 1.35 : 1;
   for (let i = 0; i < weapon.pellets; i += 1) {
-    const a = player.angle + (state.random.next() - 0.5) * 2 * weapon.spread;
+    const a = player.angle + (state.random.next() - 0.5) * 2 * weapon.spread * spreadMul;
     state.bullets.push({
       x: ox, y: oy,
       vx: Math.cos(a) * weapon.speed, vy: Math.sin(a) * weapon.speed,

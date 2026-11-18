@@ -43,6 +43,21 @@ export function nearestRoadPoint(x, y) {
   return best;
 }
 
+// A point on a road shoulder — half the time beside a vertical road, half
+// beside a horizontal one — so taxi passengers always wait where a car can
+// actually reach them, never inside a building.
+export function roadsidePoint(random) {
+  const shoulder = WORLD.road / 2 + 16;
+  if (random.next() < 0.5) {
+    const cx = random.pick(roadCentersX());
+    const side = random.next() < 0.5 ? -shoulder : shoulder;
+    return { x: cx + side, y: random.range(200, WORLD.height - 200) };
+  }
+  const cy = random.pick(roadCentersY());
+  const side = random.next() < 0.5 ? -shoulder : shoulder;
+  return { x: random.range(200, WORLD.width - 600), y: cy + side };
+}
+
 export function buildCity(random) {
   const buildings = [];
   const parks = [];

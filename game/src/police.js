@@ -27,7 +27,8 @@ export function ensurePatrol(state, random) {
 
 export function ensurePolice(state, random) {
   const want = policeCountFor(state.player.wanted);
-  const have = state.cars.filter((c) => c.police && !c.patrol).length;
+  // Roadblock interceptors are parked seals, not chasers — never counted.
+  const have = state.cars.filter((c) => c.police && !c.patrol && !c.roadblock).length;
   for (let i = have; i < want; i += 1) {
     const a = random.next() * Math.PI * 2;
     const x = state.player.x + Math.cos(a) * 700;
@@ -36,10 +37,11 @@ export function ensurePolice(state, random) {
     car.speed = 300;
     state.cars.push(car);
   }
-  // Remove surplus police when wanted falls (patrol cars are never removed here).
+  // Remove surplus police when wanted falls (patrol cars and roadblock
+  // interceptors are never removed here).
   let surplus = have - want;
   for (let i = state.cars.length - 1; i >= 0 && surplus > 0; i -= 1) {
-    if (state.cars[i].police && !state.cars[i].patrol) { state.cars.splice(i, 1); surplus -= 1; }
+    if (state.cars[i].police && !state.cars[i].patrol && !state.cars[i].roadblock) { state.cars.splice(i, 1); surplus -= 1; }
   }
 }
 
@@ -59,8 +61,10 @@ export function updatePoliceCar(car, dt, state) {
   while (diff > Math.PI) diff -= Math.PI * 2;
   while (diff < -Math.PI) diff += Math.PI * 2;
   car.angle += Math.max(-2.4 * dt, Math.min(2.4 * dt, diff));
-  // At wanted 5 the VPD drives harder and shoots farther and faster.
-  const wantSpeed = Math.min(WANTED.chaseSpeed + (state.player.wanted >= 5 ? 60 : 0), 380 + state.player.wanted * 30);
+  // At wanted 5 the VPD drives harder and shoots farther and faster — and
+  // in a lockdown the chase gets another +40 on speed and on the cap.
+  const lockdown = state.player.wanted >= 5;
+  const wantSpeed = Math.min(WANTED.chaseSpeed + (lockdown ? 100 : 0), 380 + state.player.wanted * 30 + (lockdown ? 40 : 0));
   car.speed += (wantSpeed - car.speed) * dt * 0.8;
   car.x += Math.cos(car.angle) * car.speed * dt;
   car.y += Math.sin(car.angle) * car.speed * dt;
@@ -93,7 +97,8 @@ export function updatePoliceCar(car, dt, state) {
 export function nearestPoliceDistance(state) {
   let best = Infinity;
   for (const c of state.cars) {
-    if (!c.police || c.patrol) continue;
+    // Parked roadblock interceptors do not block the wanted cooldown.
+    if (!c.police || c.patrol || c.roadblock) continue;
     best = Math.min(best, Math.hypot(c.x - state.player.x, c.y - state.player.y));
   }
   return best;

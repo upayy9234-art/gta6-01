@@ -8,6 +8,7 @@ import { addWanted } from './player.js';
 import { makeCar } from './traffic.js';
 import { CAR_MODELS } from './config.js';
 import { applyGarageToCar } from './garage.js';
+import { forceWeather } from './weather.js';
 
 function driveForward(state, seconds) {
   const fakeInput = {
@@ -36,6 +37,8 @@ export function stageShot(name, state) {
   if (name === 'chase') {
     // Put Kai in a fast car, wanted level 5, police + heli already closing in.
     // Round 5: engine Lv2 + nitro fitted, Long Pier Rifle in hand.
+    // Round 7: rain overhead, a roadblock sealing the road ahead and the
+    // second helicopter up for the lockdown.
     const car = makeCar(state.player.x + 40, state.player.y, 0, CAR_MODELS[1], {});
     state.cars.push(car);
     state.player.inCar = car; state.player.x = car.x; state.player.y = car.y;
@@ -43,6 +46,7 @@ export function stageShot(name, state) {
     applyGarageToCar(state, car);
     state.weapons.owned.rifle = true; state.weapons.current = 'rifle'; state.weapons.ammo.rifle = 60;
     addWanted(state.player, 5);
+    forceWeather(state, 'rain');
     driveForward(state, 5);
     // Driving east passes the SMG crate at (500,388), which auto-equips —
     // put the rifle back in Kai's hands for the frame.
@@ -54,6 +58,13 @@ export function stageShot(name, state) {
     state.missions.index = 12; state.missions.done = true;
     state.player.money = 24850; state.score = 68400;
     state.day = 3;
+    // Round 7: every postcard found — the hunter's 10/10 on the HUD — and
+    // fourteen fares banked on the side-income panel.
+    for (const card of state.side.postcards) card.taken = true;
+    state.side.collected = 10;
+    state.side.hunterBonusPaid = true;
+    state.side.faresDone = 14;
+    state.side.cashEarned = 3650;
     // Round 5: a fully kitted-out garage and every gun owned.
     state.garage.upgrades.engine = 3; state.garage.upgrades.armor = 2; state.garage.upgrades.nitro = 1;
     state.garage.paint = 3; state.garage.ownedPaints = [0, 1, 3];
@@ -67,11 +78,14 @@ export function stageShot(name, state) {
   // play: Kai driving through golden-hour traffic toward mission 1, mid-action.
   // Round 5: starts at the garage door with the SMG, drives 3.5 s east past
   // Virelia Motors so the garage marker, shop signs and the weapon HUD show.
+  // Round 7: a gold taxi passenger waits at (760,436) and the Virelia Motors
+  // postcard sits at (700,388) — the side hustle reads in the opening frame.
   state.player.x = 470; state.player.y = 388;
   state.weapons.owned.smg = true; state.weapons.current = 'smg'; state.weapons.ammo.smg = 182;
   const car = makeCar(state.player.x + 40, state.player.y, 0, CAR_MODELS[0], {});
   state.cars.push(car);
   state.player.inCar = car; state.player.x = car.x; state.player.y = car.y;
+  state.side.fares.push({ x: 760, y: 436, waiting: true, dest: null, timer: 0, pay: 0, id: 6001, vip: false });
   addWanted(state.player, 1);
   driveForward(state, 3.5);
   return { screen: SCREEN_PLAY };

@@ -53,6 +53,12 @@ export function createDay3() {
   return { step: 0, kills: 0 };
 }
 
+// Same bad-weather score bonus as the other jobs: rain +50, storm +100.
+export function day3WeatherBonus(state) {
+  const kind = state.weather?.kind ?? 'clear';
+  return kind === 'storm' ? 100 : kind === 'rain' ? 50 : 0;
+}
+
 function playerPosition(state) {
   const p = state.player;
   return p.inCar ? { x: p.inCar.x, y: p.inCar.y } : { x: p.x, y: p.y };
@@ -108,7 +114,7 @@ export function completeDay3Mission(state) {
   state.player.money += reward;
   m.banner = DAY3_COMPLETE[m.index] ?? 'Mission complete!';
   state.audio?.mission();
-  state.score += 1000 * (m.index + 1);
+  state.score += 1000 * (m.index + 1) + day3WeatherBonus(state);
   m.index += 1;
   m.stage = 'go'; m.targetCar = null; m.timer = 0;
   state.day3 = createDay3();

@@ -9,6 +9,9 @@ import { garageSummary } from './garage.js';
 import { nearestPoliceCar } from './police.js';
 import { radioTickerText, radioStationName } from './radio.js';
 import { shopSummary } from './shops.js';
+import { weatherLabel } from './weather.js';
+import { roadblockWarning } from './wanted.js';
+import { taxiFareText, postcardText, sideIncomeText, nearestWaitingFare } from './side.js';
 
 export function drawHUD(ctx, state) {
   const p = state.player;
@@ -37,6 +40,26 @@ export function drawHUD(ctx, state) {
   ctx.fillText(weapon.owned, 24, 142);
   ctx.fillStyle = PALETTE.muted; ctx.font = '12px system-ui, sans-serif';
   ctx.fillText('🚗 ' + garageSummary(state), 24, 164);
+
+  // Weather + postcards panel: the sky right now, and how many of Virelia's
+  // ten postcards Kai has found.
+  ctx.fillStyle = PALETTE.panel;
+  roundRect(ctx, 12, 198, 250, 52, 10); ctx.fill();
+  ctx.fillStyle = '#7cc7ff'; ctx.font = 'bold 13px system-ui, sans-serif';
+  ctx.fillText(weatherLabel(state), 24, 206);
+  ctx.fillStyle = '#ff5e8a'; ctx.font = 'bold 13px system-ui, sans-serif';
+  ctx.fillText('✉ ' + postcardText(state), 24, 228);
+
+  // Side income panel: fares done and failed, the current streak, and the
+  // total cash the taxi + postcard hustle has earned so far.
+  ctx.fillStyle = PALETTE.panel;
+  roundRect(ctx, 12, 258, 250, 52, 10); ctx.fill();
+  ctx.fillStyle = PALETTE.text; ctx.font = 'bold 13px system-ui, sans-serif';
+  const income = sideIncomeText(state);
+  const incomeParts = income.split(' — ');
+  ctx.fillText(incomeParts[0] ?? income, 24, 266);
+  ctx.fillStyle = '#7CFC9A'; ctx.font = 'bold 13px system-ui, sans-serif';
+  ctx.fillText(incomeParts[1] ?? '', 24, 288);
 
   // Wanted stars top-right, with the nearest VPD car distance.
   ctx.fillStyle = PALETTE.panel;
@@ -77,6 +100,43 @@ export function drawHUD(ctx, state) {
     ctx.globalAlpha = 1;
   }
 
+  // Roadblock warning, centred under the banner: how far the seal is.
+  const blockWarn = roadblockWarning(state);
+  if (blockWarn !== null) {
+    const warnText = '⚠ ROADBLOCK AHEAD — ' + blockWarn + 'm';
+    ctx.fillStyle = 'rgba(60,8,12,0.9)';
+    const ww = ctx.measureText(warnText).width + 40;
+    roundRect(ctx, (VIEW.width - ww) / 2, 126, ww, 30, 8); ctx.fill();
+    ctx.fillStyle = '#ff4d5e'; ctx.font = 'bold 14px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(warnText, VIEW.width / 2, 134);
+    ctx.textAlign = 'left';
+  }
+
+  // Taxi fare panel, under the wanted stars: the clock, the distance and
+  // the pay — orange when the clock is about to run out, gold otherwise.
+  const fare = taxiFareText(state);
+  if (fare) {
+    const fareText = '🚕 FARE ' + fare.timer + 's · ' + fare.dist + 'm to go · $' + fare.pay + (fare.vip ? ' · VIP' : '');
+    ctx.font = 'bold 13px system-ui, sans-serif';
+    const fw = ctx.measureText(fareText).width + 24;
+    ctx.fillStyle = PALETTE.panel;
+    roundRect(ctx, VIEW.width - fw - 12, 86, fw, 30, 8); ctx.fill();
+    ctx.fillStyle = fare.urgent ? '#ff7a3d' : '#ffc53d';
+    ctx.fillText(fareText, VIEW.width - fw, 94);
+  } else if (nearestWaitingFare(state, 260)) {
+    // No fare aboard, but a passenger is close: say so, centred above the
+    // radio ticker, so Kai knows E is worth pressing.
+    const hint = '🚕 Taxi passenger nearby — press E to pick them up';
+    ctx.fillStyle = 'rgba(8,10,24,0.78)';
+    const hw = ctx.measureText(hint).width + 24;
+    roundRect(ctx, (VIEW.width - hw) / 2, VIEW.height - 140, hw, 26, 8); ctx.fill();
+    ctx.fillStyle = '#ffc53d'; ctx.font = 'bold 12px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(hint, VIEW.width / 2, VIEW.height - 132);
+    ctx.textAlign = 'left';
+  }
+
   // Radio ticker: station + current track / dispatch line, bottom centre.
   const ticker = radioTickerText(state);
   ctx.fillStyle = 'rgba(8,10,24,0.78)';
@@ -101,7 +161,7 @@ export function drawHUD(ctx, state) {
   ctx.fillStyle = 'rgba(8,10,24,0.6)';
   roundRect(ctx, 12, VIEW.height - 58, 380, 46, 8); ctx.fill();
   ctx.fillStyle = PALETTE.muted; ctx.font = '12px system-ui, sans-serif'; ctx.textAlign = 'left';
-  ctx.fillText(p.inCar ? 'WASD drive · E exit car · Space handbrake · H honk · G garage' : 'WASD move · Mouse aim · Click/Space shoot · E enter car / shop · G garage', 22, VIEW.height - 46);
+  ctx.fillText(p.inCar ? 'WASD drive · E exit car · Space handbrake · H honk · G garage' : 'WASD move · Mouse aim · Click/Space shoot · E enter car / shop / taxi · G garage', 22, VIEW.height - 46);
   ctx.fillText('Shift run / nitro · 1–4 switch weapon · R radio · Esc pause · M sound · Cash: steal cars, finish missions', 22, VIEW.height - 28);
 
   // Clock + day/night label, left of the minimap so it never overlaps it.
@@ -146,6 +206,28 @@ function drawMinimap(ctx, state) {
   // Police dots.
   ctx.fillStyle = '#2f7bff';
   for (const c of state.cars) if (c.police) { ctx.beginPath(); ctx.arc(x0 + c.x * sx, y0 + c.y * sy, 3, 0, Math.PI * 2); ctx.fill(); }
+  // Roadblocks: red squares, so a sealed road reads at a glance.
+  ctx.fillStyle = '#ff3b30';
+  for (const block of state.roadblocks?.list ?? []) {
+    ctx.fillRect(x0 + block.x * sx - 3, y0 + block.y * sy - 3, 6, 6);
+  }
+  // Taxi: waiting passengers are gold dots, the active drop-off a gold ring.
+  ctx.fillStyle = '#ffc53d';
+  for (const fare of state.side?.fares ?? []) {
+    if (!fare.waiting) continue;
+    ctx.beginPath(); ctx.arc(x0 + fare.x * sx, y0 + fare.y * sy, 3, 0, Math.PI * 2); ctx.fill();
+  }
+  const dest = state.side?.activeFare?.dest;
+  if (dest) {
+    ctx.strokeStyle = '#ffc53d'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(x0 + dest.x * sx, y0 + dest.y * sy, 6, 0, Math.PI * 2); ctx.stroke();
+  }
+  // Postcards not yet found: pink dots.
+  ctx.fillStyle = '#ff5e8a';
+  for (const card of state.side?.postcards ?? []) {
+    if (card.taken) continue;
+    ctx.beginPath(); ctx.arc(x0 + card.x * sx, y0 + card.y * sy, 2, 0, Math.PI * 2); ctx.fill();
+  }
   // Police helicopter dots (white).
   ctx.fillStyle = '#ffffff';
   for (const heli of state.helis ?? []) { ctx.beginPath(); ctx.arc(x0 + heli.x * sx, y0 + heli.y * sy, 4, 0, Math.PI * 2); ctx.fill(); }

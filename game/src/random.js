@@ -12,6 +12,15 @@ export function createRandom(seed) {
     range(min, max) { return min + this.next() * (max - min); },
     int(min, max) { return Math.floor(this.range(min, max + 1)); },
     pick(list) { return list[Math.floor(this.next() * list.length)]; },
+    // A random element that passes a predicate, up to `tries` draws — null
+    // when nothing qualifies, so callers can fall back cleanly.
+    pickWhere(list, pred, tries = 10) {
+      for (let i = 0; i < tries; i += 1) {
+        const item = this.pick(list);
+        if (pred(item)) return item;
+      }
+      return null;
+    },
     // n distinct entries, no repeats — a shuffled prefix of a copy.
     sample(list, n) {
       const copy = list.slice();

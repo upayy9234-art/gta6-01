@@ -18,6 +18,9 @@ import { createDay3 } from './missions3.js';
 import { createRadio, updateRadio, cycleStation } from './radio.js';
 import { createShops, nearestShop, toggleShop, shopKey } from './shops.js';
 import { createPlayer, updatePlayerOnFoot, addWanted, decayWanted, regenHealth } from './player.js';
+import { createWeather, updateWeather, forceWeather } from './weather.js';
+import { createRoadblocks, updateRoadblocks, checkSpikeStrips } from './wanted.js';
+import { createSide, updateSide, tryTaxiPickup, sideSaveData, sideLoadData } from './side.js';
 import { spawnTrafficCar, spawnPedestrian, updateCarPhysics, updateTrafficCar, updatePedestrian, burst, makeCar, makeParkedCar } from './traffic.js';
 import { ensurePolice, ensurePatrol, updatePoliceCar, nearestPoliceDistance } from './police.js';
 import { ensureHeli, updateHeli } from './heli.js';
@@ -51,6 +54,10 @@ function createState() {
     extra: createExtraMissions(), day3: createDay3(),
     garage: createGarage(), weapons: createWeapons(),
     radio: createRadio(), shops: createShops(),
+    // Round 7 systems: the sky, the VPD seals and the side hustle.
+    weather: createWeather(random),
+    roadblocks: createRoadblocks(),
+    side: createSide(random),
   };
   // The east coast (beach, palms, beachfront signs) and the Portside docks
   // district own their corners of the city.
@@ -86,6 +93,8 @@ function saveGame() {
       garage: { upgrades: state.garage.upgrades, paint: state.garage.paint, ownedPaints: state.garage.ownedPaints },
       weapons: { owned: state.weapons.owned, ammo: state.weapons.ammo },
       radioStation: state.radio ? state.radio.station : 0,
+      weather: state.weather ? state.weather.kind : 'clear',
+      side: sideSaveData(state),
     }));
   } catch { /* storage off: progress lasts this visit only */ }
 }
@@ -113,6 +122,9 @@ function loadGame() {
       if (!state.weapons.owned[state.weapons.current]) state.weapons.current = 'pistol';
     }
     if (state.radio && Number.isInteger(data.radioStation)) state.radio.station = data.radioStation % 3;
+    // Weather and side hustle ride along in the save too.
+    if (typeof data.weather === 'string') forceWeather(state, data.weather);
+    if (data.side) sideLoadData(state, data.side);
     return true;
   } catch { return false; }
 }
@@ -206,6 +218,7 @@ function updateAttract(state, dt) {
   state.time += dt;
   state.timeOfDay = (state.timeOfDay + dt * 0.6) % 1440;
   updateDayNight(state);
+  updateWeather(state, dt);
   updateRadio(state, dt);
   for (const car of state.cars) {
     if (car.police) updatePoliceCar(car, dt, state);
@@ -222,6 +235,9 @@ state.stepWorld = function stepWorld(dt, input) {
   state.time += dt;
   state.timeOfDay = (state.timeOfDay + dt * 0.6) % 1440;
   updateDayNight(state);
+  updateWeather(state, dt);
+  updateRoadblocks(state, dt);
+  updateSide(state, dt);
   updateRadio(state, dt);
   updateWeaponPickups(state);
   state.bannerTimer = Math.max(0, state.bannerTimer - dt);
@@ -229,6 +245,8 @@ state.stepWorld = function stepWorld(dt, input) {
     updateCarPhysics(p.inCar, input, dt, state);
     updateNitro(state, p.inCar, input, dt);
     p.x = p.inCar.x; p.y = p.inCar.y; p.angle = p.inCar.angle;
+    // A spike strip under the player's own car shreds its tyres.
+    checkSpikeStrips(state, p.inCar, dt);
     if (p.inCar.health <= 0) {
       burst(state, p.inCar.x, p.inCar.y, '#ff6b3d', 30);
       audio.crash(1);
@@ -244,6 +262,8 @@ state.stepWorld = function stepWorld(dt, input) {
   // Traffic + pedestrians.
   for (const car of [...state.cars]) {
     if (car === p.inCar) continue;
+    // Roadblock interceptors are parked seals: they never chase.
+    if (car.roadblock) continue;
     if (car.police) updatePoliceCar(car, dt, state);
     else if (car.npc) updateTrafficCar(car, dt, state, random);
     else if (car.target === 'dario') { /* driven by missions */ }
@@ -337,9 +357,10 @@ function runGame() {
     if (actions & ACTION_RADIO && screen === SCREEN_PLAY) cycleStation(state);
     if (actions & ACTION_GARAGE && screen === SCREEN_PLAY) toggleGarage(state);
     if (actions & ACTION_ENTER_CAR && screen === SCREEN_PLAY) {
-      // With a shop open, E closes the shop instead of entering a car.
+      // E, in priority order: close an open shop, pick up a waiting taxi
+      // passenger, then enter or exit a car as before.
       if (state.shops.open) { state.shops.open = null; }
-      else enterOrExitCar();
+      else if (!tryTaxiPickup(state)) enterOrExitCar();
     }
     // Digit keys: with the garage open they buy (1–3 upgrades, 4–9 paint);
     // with a shop open they buy (1–3 items); otherwise 1–4 switch guns.
