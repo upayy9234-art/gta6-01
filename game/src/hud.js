@@ -1,6 +1,9 @@
-// HUD: cash, wanted stars, health bar, mission objective (MISSION n/12 + stage),
-// radio ticker, shop hint, minimap, clock and banners. All drawn on the same
-// canvas, top-down, neon style.
+// HUD: cash, wanted stars, health bar, mission objective (MISSION n/12 +
+// stage), radio ticker, shop hint, minimap, clock and banners. All drawn on
+// the same canvas, top-down, neon style. New in round 8: a weather + postcard
+// panel under the weapons panel, a taxi fare panel while a passenger rides,
+// a side-income line (fares, streak, cash earned), and a red roadblock
+// warning under the banner whenever the VPD seals a road ahead.
 import { PALETTE, VIEW, WORLD, MISSIONS } from './config.js';
 import { missionProgressText, missionWaypoint, missionCounterText } from './missions.js';
 import { clockText } from './daynight.js';
@@ -9,15 +12,45 @@ import { garageSummary } from './garage.js';
 import { nearestPoliceCar } from './police.js';
 import { radioTickerText, radioStationName } from './radio.js';
 import { shopSummary } from './shops.js';
+import { weatherLabel } from './weather.js';
+import { postcardText, taxiFareText } from './side.js';
+import { roadblockWarning } from './wanted.js';
+
+export function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+export function drawStar(ctx, x, y, r) {
+  ctx.beginPath();
+  for (let i = 0; i < 10; i += 1) {
+    const a = -Math.PI / 2 + i * Math.PI / 5;
+    const rad = i % 2 === 0 ? r : r * 0.45;
+    const px = x + Math.cos(a) * rad, py = y + Math.sin(a) * rad;
+    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.closePath(); ctx.fill();
+}
+
+function panel(ctx, x, y, w, h) {
+  ctx.fillStyle = PALETTE.panel;
+  roundRect(ctx, x, y, w, h, 10); ctx.fill();
+}
 
 export function drawHUD(ctx, state) {
   const p = state.player;
   ctx.save();
-  // Top-left panel: cash, score, health.
-  ctx.fillStyle = PALETTE.panel;
-  roundRect(ctx, 12, 12, 250, 92, 10); ctx.fill();
-  ctx.fillStyle = PALETTE.money; ctx.font = 'bold 24px ' + 'system-ui, sans-serif';
-  ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+
+  // Top-left: cash, score, health.
+  panel(ctx, 12, 12, 250, 92);
+  ctx.fillStyle = PALETTE.money; ctx.font = 'bold 24px system-ui, sans-serif';
   ctx.fillText('$' + p.money.toLocaleString('en-US'), 24, 20);
   ctx.fillStyle = PALETTE.text; ctx.font = '14px system-ui, sans-serif';
   ctx.fillText('SCORE ' + state.score.toLocaleString('en-US'), 24, 50);
@@ -27,10 +60,9 @@ export function drawHUD(ctx, state) {
   ctx.fillStyle = PALETTE.text; ctx.font = 'bold 12px system-ui, sans-serif';
   ctx.fillText('HP ' + Math.max(0, Math.ceil(p.health)), 210, 72);
 
-  // Weapon panel under the cash panel: current gun + ammo, owned guns, garage.
+  // Weapons panel: current gun + ammo, owned guns, garage summary.
   const weapon = weaponHudText(state);
-  ctx.fillStyle = PALETTE.panel;
-  roundRect(ctx, 12, 112, 250, 78, 10); ctx.fill();
+  panel(ctx, 12, 112, 250, 78);
   ctx.fillStyle = '#9ae8ff'; ctx.font = 'bold 14px system-ui, sans-serif';
   ctx.fillText('🔫 ' + weapon.current, 24, 120);
   ctx.fillStyle = PALETTE.text; ctx.font = '12px system-ui, sans-serif';
@@ -38,9 +70,27 @@ export function drawHUD(ctx, state) {
   ctx.fillStyle = PALETTE.muted; ctx.font = '12px system-ui, sans-serif';
   ctx.fillText('🚗 ' + garageSummary(state), 24, 164);
 
+  // Weather + postcard panel.
+  panel(ctx, 12, 198, 250, 52);
+  ctx.fillStyle = '#7cc7ff'; ctx.font = 'bold 13px system-ui, sans-serif';
+  ctx.fillText(weatherLabel(state), 24, 206);
+  ctx.fillStyle = '#ff5e8a'; ctx.font = 'bold 13px system-ui, sans-serif';
+  ctx.fillText('✉ ' + postcardText(state), 24, 228);
+
+  // Side-income panel: fares, streak and everything the side hustles paid.
+  const side = state.side;
+  if (side) {
+    panel(ctx, 12, 258, 250, 30);
+    ctx.fillStyle = '#ffc53d'; ctx.font = 'bold 12px system-ui, sans-serif';
+    ctx.fillText(
+      'FARES ' + side.faresDone + ' · FAILED ' + side.faresFailed
+      + ' · STREAK ' + side.streak + ' · +$' + side.cashEarned.toLocaleString('en-US'),
+      24, 266,
+    );
+  }
+
   // Wanted stars top-right, with the nearest VPD car distance.
-  ctx.fillStyle = PALETTE.panel;
-  roundRect(ctx, VIEW.width - 232, 12, 220, 66, 10); ctx.fill();
+  panel(ctx, VIEW.width - 232, 12, 220, 66);
   ctx.font = 'bold 13px system-ui, sans-serif'; ctx.fillStyle = PALETTE.muted;
   ctx.fillText('WANTED', VIEW.width - 220, 18);
   for (let i = 0; i < 5; i += 1) {
@@ -65,6 +115,7 @@ export function drawHUD(ctx, state) {
   ctx.fillText(label, VIEW.width / 2, 20);
   ctx.fillStyle = PALETTE.text; ctx.font = '13px system-ui, sans-serif';
   ctx.fillText(missionProgressText(state), VIEW.width / 2, 40);
+  void mission;
 
   // Banner (mission updates).
   if (state.bannerTimer > 0 && state.bannerText) {
@@ -73,8 +124,42 @@ export function drawHUD(ctx, state) {
     const bw = ctx.measureText(state.bannerText).width + 40;
     roundRect(ctx, (VIEW.width - bw) / 2, 84, bw, 34, 8); ctx.fill();
     ctx.fillStyle = PALETTE.neonGold; ctx.font = 'bold 15px system-ui, sans-serif';
+    ctx.textAlign = 'center';
     ctx.fillText(state.bannerText, VIEW.width / 2, 93);
     ctx.globalAlpha = 1;
+  }
+
+  // Roadblock warning, under the banner: distance to the sealed road.
+  const rbWarn = roadblockWarning(state);
+  if (rbWarn !== null) {
+    const text = '⚠ ROADBLOCK AHEAD — ' + rbWarn + 'm';
+    ctx.fillStyle = 'rgba(60,8,12,0.9)';
+    const rw = ctx.measureText(text).width + 40;
+    roundRect(ctx, (VIEW.width - rw) / 2, 126, rw, 30, 8); ctx.fill();
+    ctx.fillStyle = '#ff4d5e'; ctx.font = 'bold 14px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(text, VIEW.width / 2, 134);
+  }
+
+  // Taxi fare panel (right side, under the wanted panel) while a fare runs.
+  const fare = taxiFareText(state);
+  if (fare) {
+    const text = '🚕 FARE ' + fare.timer + 's · ' + fare.dist + 'm to go · $' + fare.pay + (fare.vip ? ' · VIP' : '');
+    ctx.fillStyle = 'rgba(8,10,24,0.85)';
+    const fw = ctx.measureText(text).width + 32;
+    roundRect(ctx, VIEW.width - fw - 12, 86, fw, 30, 8); ctx.fill();
+    ctx.fillStyle = fare.urgent ? '#ff7a3d' : '#ffc53d';
+    ctx.font = 'bold 13px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(text, VIEW.width - fw / 2 - 12, 94);
+  } else if (side && side.fares.some((f) => f.waiting && Math.hypot(f.x - p.x, f.y - p.y) < 260)) {
+    const text = '🚕 Taxi passenger nearby — press E to pick them up';
+    ctx.fillStyle = 'rgba(8,10,24,0.78)';
+    const fw = ctx.measureText(text).width + 32;
+    roundRect(ctx, VIEW.width - fw - 12, 86, fw, 28, 8); ctx.fill();
+    ctx.fillStyle = '#ffc53d'; ctx.font = '12px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(text, VIEW.width - fw / 2 - 12, 94);
   }
 
   // Radio ticker: station + current track / dispatch line, bottom centre.
@@ -101,7 +186,7 @@ export function drawHUD(ctx, state) {
   ctx.fillStyle = 'rgba(8,10,24,0.6)';
   roundRect(ctx, 12, VIEW.height - 58, 380, 46, 8); ctx.fill();
   ctx.fillStyle = PALETTE.muted; ctx.font = '12px system-ui, sans-serif'; ctx.textAlign = 'left';
-  ctx.fillText(p.inCar ? 'WASD drive · E exit car · Space handbrake · H honk · G garage' : 'WASD move · Mouse aim · Click/Space shoot · E enter car / shop · G garage', 22, VIEW.height - 46);
+  ctx.fillText(p.inCar ? 'WASD drive · E exit car · Space handbrake · H honk · G garage' : 'WASD move · Mouse aim · Click/Space shoot · E enter car / shop / taxi · G garage', 22, VIEW.height - 46);
   ctx.fillText('Shift run / nitro · 1–4 switch weapon · R radio · Esc pause · M sound · Cash: steal cars, finish missions', 22, VIEW.height - 28);
 
   // Clock + day/night label, left of the minimap so it never overlaps it.
@@ -136,6 +221,30 @@ function drawMinimap(ctx, state) {
   for (const shop of state.shops?.list ?? []) {
     ctx.fillRect(x0 + shop.x * sx - 2, y0 + shop.y * sy - 2, 4, 4);
   }
+  // Roadblocks on the minimap (red squares).
+  ctx.fillStyle = '#ff3b30';
+  for (const block of state.roadblocks?.list ?? []) {
+    ctx.fillRect(x0 + block.x * sx - 3, y0 + block.y * sy - 3, 6, 6);
+  }
+  // Waiting taxi passengers (gold) and the active drop-off (gold ring).
+  const side = state.side;
+  if (side) {
+    ctx.fillStyle = '#ffc53d';
+    for (const fare of side.fares) {
+      if (!fare.waiting) continue;
+      ctx.beginPath(); ctx.arc(x0 + fare.x * sx, y0 + fare.y * sy, 3, 0, Math.PI * 2); ctx.fill();
+    }
+    if (side.activeFare?.dest) {
+      ctx.strokeStyle = '#ffc53d'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(x0 + side.activeFare.dest.x * sx, y0 + side.activeFare.dest.y * sy, 6, 0, Math.PI * 2); ctx.stroke();
+    }
+    // Uncollected postcards (pink dots).
+    ctx.fillStyle = '#ff5e8a';
+    for (const card of side.postcards) {
+      if (card.taken) continue;
+      ctx.beginPath(); ctx.arc(x0 + card.x * sx, y0 + card.y * sy, 2, 0, Math.PI * 2); ctx.fill();
+    }
+  }
   // Waypoint.
   const wp = missionWaypoint(state);
   if (wp && !state.missions.done) {
@@ -156,21 +265,4 @@ function drawMinimap(ctx, state) {
   ctx.beginPath(); ctx.arc(x0 + px * sx, y0 + py * sy, 5, 0, Math.PI * 2); ctx.fill();
   ctx.strokeStyle = '#ffd23d'; ctx.lineWidth = 1.5;
   ctx.beginPath(); ctx.arc(x0 + px * sx, y0 + py * sy, 8, 0, Math.PI * 2); ctx.stroke();
-}
-
-export function roundRect(ctx, x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
-}
-
-export function drawStar(ctx, x, y, r) {
-  ctx.beginPath();
-  for (let i = 0; i < 10; i += 1) {
-    const a = -Math.PI / 2 + i * Math.PI / 5;
-    const rad = i % 2 === 0 ? r : r * 0.45;
-    const px = x + Math.cos(a) * rad, py = y + Math.sin(a) * rad;
-    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
-  }
-  ctx.closePath(); ctx.fill();
 }

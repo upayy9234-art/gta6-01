@@ -1,10 +1,14 @@
-// Neon Harbor — boot and the one loop. The world advances in fixed 1/60 s steps;
-// the renderer paints what is there. Screens: title, play, paused, busted, win.
-// ?seed=N fixes the city. ?shot=start|play|chase|win (with &seed=N) stages that
-// scene instead of running the loop, paints it twice and sets window.__shotReady.
-// The title screen is an ATTRACT MODE: the city lives behind it — traffic
-// drives, VPD patrol cars cruise, pedestrians stroll, the radio ticker turns —
-// with no input at all. The clock opens at 18:05 golden hour.
+// Neon Harbor — boot and the one loop. The world advances in fixed 1/60 s
+// steps; the renderer paints what is there. Screens: title, play, paused,
+// busted, win. ?seed=N fixes the city. ?shot=start|play|chase|win (with
+// &seed=N) stages that scene instead of running the loop, paints it twice and
+// sets window.__shotReady. The title screen is an ATTRACT MODE: the city
+// lives behind it — traffic drives, VPD patrol cars cruise, pedestrians
+// stroll, the radio ticker turns, the weather rolls on — with no input at
+// all. The clock opens at 18:05 golden hour.
+// Systems wired here: weather (weather.js), VPD roadblocks (wanted.js) and
+// the taxi/postcard side hustles (side.js), on top of the round-5 set
+// (missions, garage, weapons, radio, shops, police, heli).
 import { BEST_KEY, SAVE_KEY, STEP, SUNSET_START, VIEW, WORLD } from './config.js';
 import { createRandom } from './random.js';
 import { buildCity, buildParkedCars } from './world.js';
@@ -25,6 +29,9 @@ import { createMissions, updateMissions, missionWaypoint } from './missions.js';
 import { createAudio } from './audio.js';
 import { ACTION_CONFIRM, ACTION_PAUSE, ACTION_ENTER_CAR, ACTION_MUTE, ACTION_HONK, ACTION_GARAGE, ACTION_RADIO, createInput } from './input.js';
 import { createRenderer, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE, SCREEN_WIN } from './render.js';
+import { createWeather, updateWeather, forceWeather } from './weather.js';
+import { createRoadblocks, updateRoadblocks, checkSpikeStrips } from './wanted.js';
+import { createSide, updateSide, tryTaxiPickup, sideSaveData, sideLoadData } from './side.js';
 import { stageShot } from './shots.js';
 
 const MAX_FRAME = 0.25;
@@ -51,6 +58,9 @@ function createState() {
     extra: createExtraMissions(), day3: createDay3(),
     garage: createGarage(), weapons: createWeapons(),
     radio: createRadio(), shops: createShops(),
+    weather: createWeather(random),
+    roadblocks: createRoadblocks(),
+    side: createSide(random),
   };
   // The east coast (beach, palms, beachfront signs) and the Portside docks
   // district own their corners of the city.
@@ -86,6 +96,8 @@ function saveGame() {
       garage: { upgrades: state.garage.upgrades, paint: state.garage.paint, ownedPaints: state.garage.ownedPaints },
       weapons: { owned: state.weapons.owned, ammo: state.weapons.ammo },
       radioStation: state.radio ? state.radio.station : 0,
+      weather: state.weather ? state.weather.kind : 'clear',
+      side: sideSaveData(state),
     }));
   } catch { /* storage off: progress lasts this visit only */ }
 }
@@ -113,6 +125,8 @@ function loadGame() {
       if (!state.weapons.owned[state.weapons.current]) state.weapons.current = 'pistol';
     }
     if (state.radio && Number.isInteger(data.radioStation)) state.radio.station = data.radioStation % 3;
+    if (typeof data.weather === 'string') forceWeather(state, data.weather);
+    if (data.side) sideLoadData(state, data.side);
     return true;
   } catch { return false; }
 }
@@ -143,6 +157,8 @@ function enterOrExitCar() {
   }
   // Near a shop on foot? E opens the shop instead of stealing a car.
   if (nearestShop(state)) { toggleShop(state); return; }
+  // A waiting taxi passenger? E picks them up instead of stealing a car.
+  if (tryTaxiPickup(state)) return;
   const car = nearestCar(70);
   if (car) {
     // Stealing a parked / NPC car raises the wanted level.
@@ -199,14 +215,25 @@ function updateParticles(dt) {
   }
 }
 
+function moveCamera(state, dt) {
+  const p = state.player;
+  const tx = p.inCar ? p.inCar.x : p.x, ty = p.inCar ? p.inCar.y : p.y;
+  state.camera.x += (tx - state.camera.x) * Math.min(1, dt * 5);
+  state.camera.y += (ty - state.camera.y) * Math.min(1, dt * 5);
+  const zoom = p.inCar ? 0.78 : 1;
+  state.camera.x = Math.max(640 / zoom, Math.min(WORLD.width - 640 / zoom, state.camera.x));
+  state.camera.y = Math.max(360 / zoom, Math.min(WORLD.height - 360 / zoom, state.camera.y));
+}
+
 // Attract mode: the city lives behind the title screen. Traffic drives,
-// patrol cars cruise, pedestrians stroll, the radio ticker turns and the
-// golden-hour clock creeps on — all with no input at all.
+// patrol cars cruise, pedestrians stroll, the radio ticker turns, the weather
+// rolls on and the golden-hour clock creeps on — all with no input at all.
 function updateAttract(state, dt) {
   state.time += dt;
   state.timeOfDay = (state.timeOfDay + dt * 0.6) % 1440;
   updateDayNight(state);
   updateRadio(state, dt);
+  updateWeather(state, dt);
   for (const car of state.cars) {
     if (car.police) updatePoliceCar(car, dt, state);
     else if (car.npc) updateTrafficCar(car, dt, state, random);
@@ -223,11 +250,15 @@ state.stepWorld = function stepWorld(dt, input) {
   state.timeOfDay = (state.timeOfDay + dt * 0.6) % 1440;
   updateDayNight(state);
   updateRadio(state, dt);
+  updateWeather(state, dt);
+  updateRoadblocks(state, dt);
+  updateSide(state, dt);
   updateWeaponPickups(state);
   state.bannerTimer = Math.max(0, state.bannerTimer - dt);
   if (p.inCar) {
     updateCarPhysics(p.inCar, input, dt, state);
     updateNitro(state, p.inCar, input, dt);
+    checkSpikeStrips(state, p.inCar, dt);
     p.x = p.inCar.x; p.y = p.inCar.y; p.angle = p.inCar.angle;
     if (p.inCar.health <= 0) {
       burst(state, p.inCar.x, p.inCar.y, '#ff6b3d', 30);
@@ -241,9 +272,11 @@ state.stepWorld = function stepWorld(dt, input) {
     updatePlayerOnFoot(p, input, dt, state);
     if (input.shooting()) fireWeapon(p, state);
   }
-  // Traffic + pedestrians.
+  // Traffic + pedestrians. Roadblock cars never move — they are parked
+  // across the road on purpose.
   for (const car of [...state.cars]) {
     if (car === p.inCar) continue;
+    if (car.roadblock) continue;
     if (car.police) updatePoliceCar(car, dt, state);
     else if (car.npc) updateTrafficCar(car, dt, state, random);
     else if (car.target === 'dario') { /* driven by missions */ }
@@ -281,17 +314,12 @@ state.stepWorld = function stepWorld(dt, input) {
   updateBullets(dt);
   updateParticles(dt);
   audio.update(dt, !!p.inCar, state.radio ? state.radio.station : 0);
-  // Camera follows the player, clamped so the view stays inside the city.
-  const tx = p.inCar ? p.inCar.x : p.x, ty = p.inCar ? p.inCar.y : p.y;
-  state.camera.x += (tx - state.camera.x) * Math.min(1, dt * 5);
-  state.camera.y += (ty - state.camera.y) * Math.min(1, dt * 5);
-  const zoom = p.inCar ? 0.78 : 1;
-  state.camera.x = Math.max(640 / zoom, Math.min(WORLD.width - 640 / zoom, state.camera.x));
-  state.camera.y = Math.max(360 / zoom, Math.min(WORLD.height - 360 / zoom, state.camera.y));
+  moveCamera(state, dt);
   // Autosave every ~10 s of play.
   if (Math.floor(state.time) % 10 === 0 && Math.floor((state.time - dt)) % 10 !== 0) saveGame();
   if (p.health <= 0) { p.dead = true; state.screen = SCREEN_OVER; }
   if (state.missions.done) state.screen = SCREEN_WIN;
+  void missionWaypoint;
 };
 
 const renderer = createRenderer(canvas);

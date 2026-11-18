@@ -4,6 +4,8 @@
 // crates wait here for mission 5 — "The Portside Job". The ordinary city
 // generator leaves this corner empty (see world.js) so the docks own it.
 // Every district also gets a name label painted on the map (see DISTRICTS).
+// In fog the whole yard fades under a pale wash — the docks are where the
+// harbour fog comes in first.
 import { DISTRICTS, WORLD } from './config.js';
 
 export const PORTSIDE = {
@@ -100,6 +102,39 @@ export function drawDistrictLabels(ctx, state) {
   }
 }
 
+function drawCrane(ctx, crane, t) {
+  const tipX = crane.x + Math.cos(crane.angle) * crane.arm;
+  const tipY = crane.y - 150 + Math.sin(crane.angle) * crane.arm;
+  ctx.strokeStyle = '#c78a2e'; ctx.lineWidth = 6;
+  ctx.beginPath(); ctx.moveTo(crane.x - 26, crane.y + 60); ctx.lineTo(crane.x - 14, crane.y - 150); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(crane.x + 26, crane.y + 60); ctx.lineTo(crane.x + 14, crane.y - 150); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(crane.x - 34, crane.y - 150); ctx.lineTo(crane.x + 34, crane.y - 150); ctx.stroke();
+  ctx.lineWidth = 5;
+  ctx.beginPath(); ctx.moveTo(crane.x, crane.y - 150); ctx.lineTo(tipX, tipY); ctx.stroke();
+  // Hanging hook block on a cable.
+  ctx.strokeStyle = '#8a8fae'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(tipX, tipY); ctx.lineTo(tipX, tipY + 46); ctx.stroke();
+  ctx.fillStyle = '#e8c34a'; ctx.fillRect(tipX - 9, tipY + 46, 18, 14);
+  // Red warning light blinks with the clock.
+  ctx.fillStyle = Math.sin(t * 2.4) > 0 ? '#ff3b30' : '#5a1a16';
+  ctx.beginPath(); ctx.arc(crane.x, crane.y - 162, 6, 0, Math.PI * 2); ctx.fill();
+}
+
+function drawBoat(ctx, boat, t) {
+  const bob = Math.sin(t * 0.9 + boat.y * 0.01) * 3;
+  ctx.save();
+  ctx.translate(boat.x, boat.y + bob);
+  ctx.fillStyle = boat.hue;
+  ctx.beginPath();
+  ctx.moveTo(-boat.len / 2, -8); ctx.lineTo(boat.len / 2, -8);
+  ctx.lineTo(boat.len / 2 - 10, 12); ctx.lineTo(-boat.len / 2 + 10, 12);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#f2f4ff'; ctx.fillRect(-16, -22, 32, 14);
+  ctx.strokeStyle = '#5a3b2e'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(0, -22); ctx.lineTo(0, -52); ctx.stroke();
+  ctx.restore();
+}
+
 export function drawPortside(ctx, state) {
   const port = state.city.portside;
   if (!port) return;
@@ -117,39 +152,9 @@ export function drawPortside(ctx, state) {
   ctx.fillStyle = '#9aa3c7'; ctx.font = '13px system-ui, sans-serif';
   ctx.fillText('container yard · moorings · no questions asked', PORTSIDE.x + PORTSIDE.w / 2, PORTSIDE.y + 46);
   // Gantry cranes: legs, crossbeam, jib arm, hanging hook, blinking beacon.
-  for (const crane of port.cranes) {
-    const tipX = crane.x + Math.cos(crane.angle) * crane.arm;
-    const tipY = crane.y - 150 + Math.sin(crane.angle) * crane.arm;
-    ctx.strokeStyle = '#c78a2e'; ctx.lineWidth = 6;
-    ctx.beginPath(); ctx.moveTo(crane.x - 26, crane.y + 60); ctx.lineTo(crane.x - 14, crane.y - 150); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(crane.x + 26, crane.y + 60); ctx.lineTo(crane.x + 14, crane.y - 150); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(crane.x - 34, crane.y - 150); ctx.lineTo(crane.x + 34, crane.y - 150); ctx.stroke();
-    ctx.lineWidth = 5;
-    ctx.beginPath(); ctx.moveTo(crane.x, crane.y - 150); ctx.lineTo(tipX, tipY); ctx.stroke();
-    // Hanging hook block on a cable.
-    ctx.strokeStyle = '#8a8fae'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(tipX, tipY); ctx.lineTo(tipX, tipY + 46); ctx.stroke();
-    ctx.fillStyle = '#e8c34a'; ctx.fillRect(tipX - 9, tipY + 46, 18, 14);
-    // Red warning light blinks with the clock.
-    const blink = (Math.sin(t * 2.4) > 0) ? '#ff3b30' : '#5a1a16';
-    ctx.fillStyle = blink;
-    ctx.beginPath(); ctx.arc(crane.x, crane.y - 162, 6, 0, Math.PI * 2); ctx.fill();
-  }
+  for (const crane of port.cranes) drawCrane(ctx, crane, t);
   // Moored boats: hull, cabin and mast, bobbing gently on the river.
-  for (const boat of port.boats) {
-    const bob = Math.sin(t * 0.9 + boat.y * 0.01) * 3;
-    ctx.save();
-    ctx.translate(boat.x, boat.y + bob);
-    ctx.fillStyle = boat.hue;
-    ctx.beginPath();
-    ctx.moveTo(-boat.len / 2, -8); ctx.lineTo(boat.len / 2, -8);
-    ctx.lineTo(boat.len / 2 - 10, 12); ctx.lineTo(-boat.len / 2 + 10, 12);
-    ctx.closePath(); ctx.fill();
-    ctx.fillStyle = '#f2f4ff'; ctx.fillRect(-16, -22, 32, 14);
-    ctx.strokeStyle = '#5a3b2e'; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.moveTo(0, -22); ctx.lineTo(0, -52); ctx.stroke();
-    ctx.restore();
-  }
+  for (const boat of port.boats) drawBoat(ctx, boat, t);
   // Mission crates: gold pulsing ring + gold square + label while untaken,
   // a faint outline once Kai has lifted one.
   const crates = state.extra ? state.extra.crates : [];
@@ -168,6 +173,11 @@ export function drawPortside(ctx, state) {
       ctx.strokeStyle = 'rgba(255,197,61,0.35)'; ctx.lineWidth = 1.5;
       ctx.strokeRect(crate.x - 13, crate.y - 13, 26, 26);
     }
+  }
+  // Fog rolls in off the water and swallows the yard first.
+  if (state.weather && state.weather.kind === 'fog') {
+    ctx.fillStyle = 'rgba(180,190,210,0.10)';
+    ctx.fillRect(PORTSIDE.x, PORTSIDE.y, PORTSIDE.w, PORTSIDE.h);
   }
   // Keep the world width referenced so the district never drifts off-grid.
   void WORLD.width;

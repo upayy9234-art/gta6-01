@@ -3,7 +3,8 @@
 // title / pause / game-over / win screens. Camera follows the player and zooms
 // out while driving. Golden hour paints a warm wash over everything, long
 // shadows stretch east from buildings and cars, and every named building wears
-// its sign.
+// its sign. Weather paints over the world last in screen space — rain streaks,
+// fog banks and lightning flashes — and wet roads turn darker while it rains.
 import { PALETTE, VIEW, WORLD } from './config.js';
 import { drawHUD, roundRect } from './hud.js';
 import { missionWaypoint } from './missions.js';
@@ -14,6 +15,9 @@ import { drawWeaponPickups } from './weapons.js';
 import { drawGarage, GARAGE_SPOT } from './garage.js';
 import { drawShopPanel } from './shops.js';
 import { heliSpotlightAlpha } from './heli.js';
+import { drawRoadblocks } from './wanted.js';
+import { drawSideMarkers } from './side.js';
+import { rainDrops, fogBlobs, isWet } from './weather.js';
 
 export const SCREEN_TITLE = 'title';
 export const SCREEN_PLAY = 'play';
@@ -35,7 +39,8 @@ export function createRenderer(canvas) {
       const cw = canvas.width, ch = canvas.height;
       const scale = Math.min(cw / VIEW.width, ch / VIEW.height);
       ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.fillStyle = PALETTE.sky; ctx.fillRect(0, 0, cw, ch);
+      ctx.fillStyle = PALETTE.sky;
+      ctx.fillRect(0, 0, cw, ch);
       ctx.setTransform(scale, 0, 0, scale, (cw - VIEW.width * scale) / 2, (ch - VIEW.height * scale) / 2);
       const cam = state.camera;
       const zoom = state.player.inCar ? 0.78 : 1;
@@ -45,30 +50,8 @@ export function createRenderer(canvas) {
       drawWorld(ctx, state);
       drawEntities(ctx, state);
       ctx.restore();
-      // Day/night sky: a tint that follows the clock, then stars, moon or sun
-      // in screen space so the sky always reads, day or night. Golden hour
-      // adds a warm sunset gradient over the whole frame instead of the
-      // night tint — the first impression must read sunset, not navy dark.
-      const sky = skyState(state.timeOfDay);
-      if (sky.golden > 0.02) {
-        const g = ctx.createLinearGradient(0, 0, 0, VIEW.height);
-        g.addColorStop(0, 'rgba(255,150,70,' + (0.30 * sky.golden).toFixed(3) + ')');
-        g.addColorStop(0.55, 'rgba(255,110,80,' + (0.16 * sky.golden).toFixed(3) + ')');
-        g.addColorStop(1, 'rgba(120,40,90,' + (0.10 * sky.golden).toFixed(3) + ')');
-        ctx.fillStyle = g;
-        ctx.fillRect(0, 0, VIEW.width, VIEW.height);
-      }
-      if (sky.warmAlpha > 0.005) {
-        ctx.fillStyle = 'rgba(255,122,61,' + sky.warmAlpha.toFixed(3) + ')';
-        ctx.fillRect(0, 0, VIEW.width, VIEW.height);
-      }
-      if (sky.nightAlpha > 0.005) {
-        ctx.fillStyle = 'rgba(10,12,40,' + sky.nightAlpha.toFixed(3) + ')';
-        ctx.fillRect(0, 0, VIEW.width, VIEW.height);
-      }
-      drawStars(ctx, state, VIEW.width, VIEW.height);
-      drawMoon(ctx, state, VIEW.width);
-      drawSun(ctx, state, VIEW.width);
+      drawSky(ctx, state);
+      drawWeatherOverlay(ctx, state);
       if (screen === SCREEN_PLAY || screen === SCREEN_PAUSED) drawHUD(ctx, state);
       if (screen === SCREEN_TITLE) drawTitle(ctx, state, best);
       if (screen === SCREEN_PAUSED) drawPause(ctx);
@@ -81,23 +64,91 @@ export function createRenderer(canvas) {
   };
 }
 
+// Day/night sky in screen space: a tint that follows the clock, then stars,
+// moon or sun. Golden hour adds a warm sunset gradient over the whole frame
+// instead of the night tint — the first impression must read sunset, not navy.
+function drawSky(ctx, state) {
+  const sky = skyState(state.timeOfDay, state.weather);
+  if (sky.golden > 0.02) {
+    const g = ctx.createLinearGradient(0, 0, 0, VIEW.height);
+    g.addColorStop(0, 'rgba(255,150,70,' + (0.30 * sky.golden).toFixed(3) + ')');
+    g.addColorStop(0.55, 'rgba(255,110,80,' + (0.16 * sky.golden).toFixed(3) + ')');
+    g.addColorStop(1, 'rgba(120,40,90,' + (0.10 * sky.golden).toFixed(3) + ')');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, VIEW.width, VIEW.height);
+  }
+  if (sky.warmAlpha > 0.005) {
+    ctx.fillStyle = 'rgba(255,122,61,' + sky.warmAlpha.toFixed(3) + ')';
+    ctx.fillRect(0, 0, VIEW.width, VIEW.height);
+  }
+  if (sky.nightAlpha > 0.005) {
+    ctx.fillStyle = 'rgba(10,12,40,' + sky.nightAlpha.toFixed(3) + ')';
+    ctx.fillRect(0, 0, VIEW.width, VIEW.height);
+  }
+  drawStars(ctx, state, VIEW.width, VIEW.height);
+  drawMoon(ctx, state, VIEW.width);
+  drawSun(ctx, state, VIEW.width);
+}
+
+// Rain, fog and lightning in screen space, after the sky, before the HUD.
+function drawWeatherOverlay(ctx, state) {
+  const w = state.weather;
+  if (!w) return;
+  const kind = w.kind;
+  if (kind === 'rain' || kind === 'storm') {
+    for (const drop of rainDrops(state.time, 110, VIEW.width, VIEW.height)) {
+      ctx.strokeStyle = 'rgba(180,200,235,0.45)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(drop.x, drop.y);
+      ctx.lineTo(drop.x - 6, drop.y + drop.len);
+      ctx.stroke();
+    }
+    // Wet streets catch the light.
+    ctx.fillStyle = 'rgba(140,170,220,0.05)';
+    ctx.fillRect(0, 0, VIEW.width, VIEW.height);
+  }
+  if (kind === 'fog') {
+    for (const blob of fogBlobs(state.time, 7, VIEW.width, VIEW.height)) {
+      const g = ctx.createRadialGradient(blob.x, blob.y, 0, blob.x, blob.y, blob.r);
+      g.addColorStop(0, 'rgba(190,200,220,0.16)');
+      g.addColorStop(1, 'rgba(190,200,220,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(blob.x, blob.y, blob.r, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+  if (w.flash > 0.02) {
+    ctx.fillStyle = 'rgba(240,244,255,' + (w.flash * 0.55).toFixed(3) + ')';
+    ctx.fillRect(0, 0, VIEW.width, VIEW.height);
+  }
+}
+
+function inView(cam, vw, vh, x, y, w, h, margin) {
+  return x + w > cam.x - vw / 2 - margin && x < cam.x + vw / 2 + margin
+    && y + h > cam.y - vh / 2 - margin && y < cam.y + vh / 2 + margin;
+}
+
 function drawWorld(ctx, state) {
   const cam = state.camera;
   const vw = VIEW.width + 200, vh = VIEW.height + 200;
   const x0 = Math.max(0, cam.x - vw / 2), y0 = Math.max(0, cam.y - vh / 2);
   const golden = goldenFactor(state.timeOfDay);
   const shadowLen = shadowStretch(state.timeOfDay);
+  const wet = state.weather ? isWet(state.weather.kind) : false;
   // Ground (unclamped so the view never shows void past the world edge).
   // At golden hour the ground and roads lift to a warm dusk brown instead
   // of the night navy, so the sunset reads in every frame.
-  ctx.fillStyle = golden > 0.3 ? '#2e2840' : PALETTE.ground; ctx.fillRect(cam.x - vw / 2, cam.y - vh / 2, vw, vh);
+  ctx.fillStyle = golden > 0.3 ? '#2e2840' : PALETTE.ground;
+  ctx.fillRect(cam.x - vw / 2, cam.y - vh / 2, vw, vh);
   // East coast: sand + ocean (drawn before roads so the boulevard sits on top).
   drawCoast(ctx, state);
   // Bridges.
   ctx.fillStyle = PALETTE.bridge;
-  ctx.fillRect(2900, 620, 500, 96); ctx.fillRect(2900, 1680, 500, 96);
-  // Roads.
-  ctx.fillStyle = golden > 0.3 ? '#38324e' : PALETTE.road;
+  ctx.fillRect(2900, 620, 500, 96);
+  ctx.fillRect(2900, 1680, 500, 96);
+  // Roads — darker and glossier while the streets are wet, unless the
+  // golden hour is still strong enough to warm them back up.
+  ctx.fillStyle = wet && golden <= 0.3 ? '#2d3250' : golden > 0.3 ? '#38324e' : PALETTE.road;
   for (let x = 388; x < WORLD.width; x += 436) ctx.fillRect(x - WORLD.road / 2, y0, WORLD.road, vh);
   for (let y = 388; y < WORLD.height; y += 436) ctx.fillRect(x0, y - WORLD.road / 2, vw, WORLD.road);
   // Road centre dashes.
@@ -135,14 +186,14 @@ function drawWorld(ctx, state) {
   if (shadowLen > 1.4) {
     ctx.fillStyle = PALETTE.shadow;
     for (const b of state.city.buildings) {
-      if (b.x > cam.x + vw / 2 + 100 || b.x + b.w < cam.x - vw / 2 - 100 || b.y > cam.y + vh / 2 + 100 || b.y + b.h < cam.y - vh / 2 - 100) continue;
+      if (!inView(cam, vw, vh, b.x, b.y, b.w, b.h, 100)) continue;
       const len = Math.min(140, b.w * 0.35 * shadowLen);
       ctx.fillRect(b.x + b.w * 0.4, b.y + b.h * 0.25, len, b.h * 0.75);
     }
   }
   // Buildings with lit windows and neon signs.
   for (const b of state.city.buildings) {
-    if (b.x > cam.x + vw / 2 + 100 || b.x + b.w < cam.x - vw / 2 - 100 || b.y > cam.y + vh / 2 + 100 || b.y + b.h < cam.y - vh / 2 - 100) continue;
+    if (!inView(cam, vw, vh, b.x, b.y, b.w, b.h, 100)) continue;
     ctx.fillStyle = b.color; ctx.fillRect(b.x, b.y, b.w, b.h);
     // Warm sunset light on the facade at golden hour.
     if (golden > 0.3) {
@@ -157,8 +208,9 @@ function drawWorld(ctx, state) {
       if ((i * 7 + j * 13 + b.windows) % 3 === 0) ctx.fillRect(b.x + 8 + i * 34, b.y + 10 + j * 34, 12, 16);
     }
     if (b.neon) {
-      const sky = skyState(state.timeOfDay);
-      ctx.fillStyle = b.neon; ctx.globalAlpha = Math.min(1, 0.55 + sky.neonBoost * 0.5);
+      const sky = skyState(state.timeOfDay, state.weather);
+      ctx.fillStyle = b.neon;
+      ctx.globalAlpha = Math.min(1, 0.55 + sky.neonBoost * 0.5);
       ctx.fillRect(b.x + b.w / 2 - 26, b.y - 4, 52, 8);
       ctx.globalAlpha = 1;
     }
@@ -177,7 +229,7 @@ function drawWorld(ctx, state) {
   // District name labels across the map.
   drawDistrictLabels(ctx, state);
   // Street lamps glow — wider and brighter at night, per the day/night sky.
-  const sky = skyState(state.timeOfDay);
+  const sky = skyState(state.timeOfDay, state.weather);
   for (const lamp of state.city.lamps) {
     if (Math.abs(lamp.x - cam.x) > vw / 2 || Math.abs(lamp.y - cam.y) > vh / 2) continue;
     ctx.fillStyle = 'rgba(255,214,106,' + sky.lampGlow.toFixed(3) + ')';
@@ -247,7 +299,10 @@ function drawCar(ctx, car, state) {
 }
 
 function drawEntities(ctx, state) {
-  // Weapon pickups first, so their rings sit under cars and the player.
+  // Roadblocks and side-hustle markers sit under everything else, on the road.
+  drawRoadblocks(ctx, state);
+  drawSideMarkers(ctx, state);
+  // Weapon pickups next, so their rings sit under cars and the player.
   drawWeaponPickups(ctx, state);
   // Pedestrians.
   for (const ped of state.peds) {
@@ -343,6 +398,8 @@ function readSave() {
 
 function drawTitle(ctx, state, best) {
   const golden = goldenFactor(state.timeOfDay);
+  // A lighter veil at golden hour: the living city behind the logo stays
+  // visible — the title screen must read as a busy sunset city, not a void.
   ctx.fillStyle = 'rgba(6,8,20,' + (golden > 0.3 ? 0.42 : 0.58) + ')';
   ctx.fillRect(0, 0, VIEW.width, VIEW.height);
   ctx.textAlign = 'center';
@@ -357,9 +414,11 @@ function drawTitle(ctx, state, best) {
   ctx.fillText('Kai Mercer. One last job for fixer Mara Voss — then the Harbor Vault heist.', VIEW.width / 2, 268);
   ctx.fillText('Steal cars, outrun the VPD, rob the Neon Strip casino, raid the Portside docks,', VIEW.width / 2, 292);
   ctx.fillText('eat at Pier 9, tune your ride at Virelia Motors, and take the final score.', VIEW.width / 2, 316);
+  ctx.fillStyle = '#7cc7ff'; ctx.font = 'bold 15px system-ui, sans-serif';
+  ctx.fillText('Dodge VPD roadblocks, drive through rain and storms, pick up taxi fares — and find all 10 postcards.', VIEW.width / 2, 340);
   ctx.fillStyle = PALETTE.muted; ctx.font = '15px system-ui, sans-serif';
-  ctx.fillText('WASD move / drive  ·  Mouse aim  ·  Click or Space shoot  ·  E enter car / shop', VIEW.width / 2, 360);
-  ctx.fillText('Shift run / nitro  ·  H honk  ·  G garage  ·  R radio  ·  1–4 switch weapon  ·  Esc pause  ·  M sound', VIEW.width / 2, 384);
+  ctx.fillText('WASD move / drive  ·  Mouse aim  ·  Click or Space shoot  ·  E enter car / shop / taxi', VIEW.width / 2, 376);
+  ctx.fillText('Shift run / nitro  ·  H honk  ·  G garage  ·  R radio  ·  1–4 switch weapon  ·  Esc pause  ·  M sound', VIEW.width / 2, 400);
   const save = readSave();
   const pulse = 0.7 + Math.sin(state.time * 3) * 0.3;
   ctx.globalAlpha = pulse;

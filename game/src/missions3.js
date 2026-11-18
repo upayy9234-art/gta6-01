@@ -4,6 +4,9 @@
 // short list of steps (go / grab / escape); the HUD shows "STAGE s/t" so the
 // player always knows how far through the job they are. Missions 1–4 live in
 // missions.js, 5–6 in missions2.js.
+// A step is one waypoint: `go` means reach it, `grab` means reach it and take
+// the cash (and the heat that comes with it), `escape` means reach it to close
+// the job. The step index lives in state.day3 and resets on every job.
 import { MISSION_REWARD, MISSIONS } from './config.js';
 
 export const HIDEOUT = { x: 420, y: 420 };
@@ -58,15 +61,28 @@ function playerPosition(state) {
   return p.inCar ? { x: p.inCar.x, y: p.inCar.y } : { x: p.x, y: p.y };
 }
 
+// Same wet-weather score bonus as the earlier jobs (rain +50, storm +100).
+export function day3WeatherBonus(state) {
+  const kind = state.weather ? state.weather.kind : 'clear';
+  if (kind === 'storm') return 100;
+  if (kind === 'rain') return 50;
+  return 0;
+}
+
 export function day3Steps(state) {
   return DAY3_STEPS[state.missions.index] ?? [];
 }
 
-export function day3Waypoint(state) {
+function currentStep(state) {
   const steps = day3Steps(state);
   const d3 = state.day3;
   if (!d3 || steps.length === 0) return null;
-  const step = steps[Math.min(d3.step, steps.length - 1)];
+  return steps[Math.min(d3.step, steps.length - 1)];
+}
+
+export function day3Waypoint(state) {
+  const step = currentStep(state);
+  if (!step) return null;
   return { x: step.x, y: step.y };
 }
 
@@ -108,9 +124,11 @@ export function completeDay3Mission(state) {
   state.player.money += reward;
   m.banner = DAY3_COMPLETE[m.index] ?? 'Mission complete!';
   state.audio?.mission();
-  state.score += 1000 * (m.index + 1);
+  state.score += 1000 * (m.index + 1) + day3WeatherBonus(state);
   m.index += 1;
-  m.stage = 'go'; m.targetCar = null; m.timer = 0;
+  m.stage = 'go';
+  m.targetCar = null;
+  m.timer = 0;
   state.day3 = createDay3();
   if (m.index >= MISSIONS.length) {
     m.done = true;

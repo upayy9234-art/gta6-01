@@ -1,22 +1,37 @@
 // Player state: on-foot movement with mouse aim, shooting, entering/exiting cars,
 // health, money and the wanted level. Driving physics live in traffic.js.
 // Shops heal Kai (see shops.js); the garage tunes his cars (see garage.js).
+// A VPD spike strip (see wanted.js) shreds a car's tyres — the damage and the
+// slow live here, with the rest of the player damage code.
 import { PLAYER, WORLD } from './config.js';
 import { collideBuildings, isInWater, isOnRoad } from './world.js';
 
 export function createPlayer(x, y) {
   return {
-    x, y, angle: -Math.PI / 2, speed: 0, health: PLAYER.health, money: 250,
-    wanted: 0, wantedTimer: 0, inCar: null, fireCooldown: 0, invulnerable: 0,
-    moving: false, onFoot: true, dead: false, meals: 0,
+    x, y,
+    angle: -Math.PI / 2,
+    speed: 0,
+    health: PLAYER.health,
+    money: 250,
+    wanted: 0,
+    wantedTimer: 0,
+    inCar: null,
+    fireCooldown: 0,
+    invulnerable: 0,
+    moving: false,
+    onFoot: true,
+    dead: false,
+    meals: 0,
   };
 }
 
 export function updatePlayerOnFoot(player, input, dt, state) {
   const speed = input.run() ? PLAYER.runSpeed : PLAYER.walkSpeed;
-  let mx = input.moveX(); let my = (input.down() ? 1 : 0) - (input.up() ? 1 : 0);
+  let mx = input.moveX();
+  let my = (input.down() ? 1 : 0) - (input.up() ? 1 : 0);
   const len = Math.hypot(mx, my) || 1;
-  mx /= len; my /= len;
+  mx /= len;
+  my /= len;
   player.moving = mx !== 0 || my !== 0;
   let nx = player.x + mx * speed * dt;
   let ny = player.y + my * speed * dt;
@@ -66,20 +81,60 @@ export function decayWanted(player, dt, hidden) {
   // Wanted cools off slowly while the player stays out of police sight.
   if (player.wanted > 0 && hidden) {
     player.wantedTimer += dt;
-    if (player.wantedTimer > 14) { player.wanted -= 1; player.wantedTimer = 0; }
-  } else player.wantedTimer = 0;
+    if (player.wantedTimer > 14) {
+      player.wanted -= 1;
+      player.wantedTimer = 0;
+    }
+  } else {
+    player.wantedTimer = 0;
+  }
 }
 
 export function playerShoot(player, state) {
   if (player.fireCooldown > 0 || player.inCar) return;
   player.fireCooldown = PLAYER.fireInterval;
   state.bullets.push({
-    x: player.x + Math.cos(player.angle) * 22, y: player.y + Math.sin(player.angle) * 22,
-    vx: Math.cos(player.angle) * PLAYER.bulletSpeed, vy: Math.sin(player.angle) * PLAYER.bulletSpeed,
-    life: 0.7, fromPolice: false,
+    x: player.x + Math.cos(player.angle) * 22,
+    y: player.y + Math.sin(player.angle) * 22,
+    vx: Math.cos(player.angle) * PLAYER.bulletSpeed,
+    vy: Math.sin(player.angle) * PLAYER.bulletSpeed,
+    life: 0.7,
+    fromPolice: false,
   });
   state.audio?.shoot();
-  state.particles.push({ x: player.x + Math.cos(player.angle) * 26, y: player.y + Math.sin(player.angle) * 26, vx: Math.cos(player.angle) * 60, vy: Math.sin(player.angle) * 60, life: 0.12, max: 0.12, color: '#ffe27a', size: 4 });
+  state.particles.push({
+    x: player.x + Math.cos(player.angle) * 26,
+    y: player.y + Math.sin(player.angle) * 26,
+    vx: Math.cos(player.angle) * 60,
+    vy: Math.sin(player.angle) * 60,
+    life: 0.12, max: 0.12,
+    color: '#ffe27a', size: 4,
+  });
 }
 
-export function isPlayerOnRoad(player) { return isOnRoad(player.x, player.y); }
+export function isPlayerOnRoad(player) {
+  return isOnRoad(player.x, player.y);
+}
+
+// A VPD spike strip (see wanted.js): the car takes damage, loses speed at
+// once, and drags for a while afterwards — the strip stays dangerous even
+// after the first bite, because the tyres are gone.
+export function carHitSpikeStrip(state, car) {
+  car.health = Math.max(0, car.health - 12);
+  car.speed *= 0.45;
+  car.spikeSlow = 1.6;
+  // Shredded rubber and sparks, both colours at once.
+  for (const [color, n] of [['#c9d2ff', 14], ['#ff7a3d', 8]]) {
+    for (let i = 0; i < n; i += 1) {
+      const a = Math.random() * Math.PI * 2;
+      state.particles.push({
+        x: car.x, y: car.y,
+        vx: Math.cos(a) * 160, vy: Math.sin(a) * 160,
+        life: 0.5, max: 0.5, color, size: 3,
+      });
+    }
+  }
+  state.audio?.crash(0.8);
+  state.bannerText = 'Spike strip! Tyres shredded — the car is barely holding together.';
+  state.bannerTimer = 3;
+}

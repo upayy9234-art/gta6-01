@@ -3,6 +3,8 @@
 // paint jobs. Upgrades apply to whatever car Kai climbs into next — and to the
 // car he is already driving when he buys them. Garage state rides along in the
 // save file, so a tuned ride survives a reload.
+// The panel also warns about the weather outside: a storm means slick roads
+// and a longer braking distance, so the garage is where Kai hears it first.
 import { CAR, CAR_MODELS } from './config.js';
 import { spendCash } from './player.js';
 
@@ -54,11 +56,12 @@ export function toggleGarage(state) {
   return true;
 }
 
+// Push the garage's tuning onto a car: speed multiplier from the engine,
+// health from the armor, nitro flag, and the sprayed paint colour.
 export function applyGarageToCar(state, car) {
   if (!car) return;
   const g = state.garage;
   car.speedMul = 1 + 0.12 * g.upgrades.engine;
-  // Armor raises max health; buying a level also patches the car up by 60.
   const prevArmor = car._garageArmor ?? 0;
   car.maxHealth = 160 + 60 * g.upgrades.armor;
   if (g.upgrades.armor > prevArmor) {
@@ -70,21 +73,21 @@ export function applyGarageToCar(state, car) {
   if (g.paint !== null && PAINT_JOBS[g.paint]) car.color = PAINT_JOBS[g.paint].color;
 }
 
+function deny(state, message) {
+  state.bannerText = message;
+  state.bannerTimer = 2.5;
+  return false;
+}
+
 export function buyUpgrade(state, kind) {
   const g = state.garage;
   const up = GARAGE_UPGRADES[kind];
   if (!up) return false;
   const level = g.upgrades[kind];
-  if (level >= up.levels) {
-    state.bannerText = up.name + ' is already MAXED.';
-    state.bannerTimer = 2.5;
-    return false;
-  }
+  if (level >= up.levels) return deny(state, up.name + ' is already MAXED.');
   const price = up.prices[level];
   if (!spendCash(state.player, price)) {
-    state.bannerText = 'Not enough cash — ' + up.name + ' Lv' + (level + 1) + ' costs $' + price + '.';
-    state.bannerTimer = 2.5;
-    return false;
+    return deny(state, 'Not enough cash — ' + up.name + ' Lv' + (level + 1) + ' costs $' + price + '.');
   }
   g.upgrades[kind] = level + 1;
   state.audio?.buy();
@@ -107,9 +110,7 @@ export function buyPaint(state, index) {
     return true;
   }
   if (!spendCash(state.player, paint.price)) {
-    state.bannerText = 'Not enough cash — ' + paint.name + ' costs $' + paint.price + '.';
-    state.bannerTimer = 2.5;
-    return false;
+    return deny(state, 'Not enough cash — ' + paint.name + ' costs $' + paint.price + '.');
   }
   g.ownedPaints.push(index);
   g.paint = index;
@@ -177,10 +178,23 @@ export function carOfTheDay(random) {
   return 'Today\u2019s pick: ' + model.name + ' — ' + line + '.';
 }
 
-function panel(ctx, x, y, w, h, r) {
+// One weather line for the garage panel, keyed by the sky outside.
+export function garageWeatherLine(state) {
+  const kind = state.weather ? state.weather.kind : 'clear';
+  if (kind === 'storm') return '⛈️ Storm outside — grip is down, mind the slick roads.';
+  if (kind === 'rain') return '🌧️ Rain outside — the streets are slick, take it slow.';
+  if (kind === 'fog') return '🌫️ Fog outside — keep your eyes on the road, not the sky.';
+  return '';
+}
+
+function panelPath(ctx, x, y, w, h, r) {
   ctx.beginPath();
-  ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
 }
 
 export function drawGarage(ctx, state) {
@@ -192,9 +206,9 @@ export function drawGarage(ctx, state) {
   ctx.fillRect(0, 0, 1280, 720);
   const x = 340, y = 78, w = 600, h = 540;
   ctx.fillStyle = 'rgba(8,10,24,0.96)';
-  panel(ctx, x, y, w, h, 14); ctx.fill();
+  panelPath(ctx, x, y, w, h, 14); ctx.fill();
   ctx.strokeStyle = '#ffc53d'; ctx.lineWidth = 3;
-  panel(ctx, x, y, w, h, 14); ctx.stroke();
+  panelPath(ctx, x, y, w, h, 14); ctx.stroke();
   ctx.textAlign = 'left'; ctx.textBaseline = 'top';
   ctx.fillStyle = '#ffc53d'; ctx.font = 'bold 26px system-ui, sans-serif';
   ctx.fillText('🔧 VIRELIA MOTORS', x + 28, y + 22);
@@ -202,7 +216,13 @@ export function drawGarage(ctx, state) {
   ctx.fillText('garage · upgrades · paint', x + 28, y + 56);
   ctx.fillStyle = '#7CFC9A'; ctx.font = 'bold 20px system-ui, sans-serif';
   ctx.fillText('CASH $' + p.money.toLocaleString('en-US'), x + w - 190, y + 26);
+  const weatherLine = garageWeatherLine(state);
   let rowY = y + 96;
+  if (weatherLine) {
+    ctx.fillStyle = '#7cc7ff'; ctx.font = 'bold 13px system-ui, sans-serif';
+    ctx.fillText(weatherLine, x + 28, rowY);
+    rowY += 26;
+  }
   ctx.fillStyle = '#22e6ff'; ctx.font = 'bold 15px system-ui, sans-serif';
   ctx.fillText('UPGRADES — press 1–3', x + 28, rowY);
   rowY += 30;
@@ -212,7 +232,7 @@ export function drawGarage(ctx, state) {
     const maxed = level >= up.levels;
     const price = maxed ? 'MAXED' : '$' + up.prices[level].toLocaleString('en-US');
     ctx.fillStyle = 'rgba(255,255,255,0.06)';
-    panel(ctx, x + 28, rowY, w - 56, 44, 8); ctx.fill();
+    panelPath(ctx, x + 28, rowY, w - 56, 44, 8); ctx.fill();
     ctx.fillStyle = '#f2f4ff'; ctx.font = 'bold 15px system-ui, sans-serif';
     ctx.fillText('[' + (i + 1) + '] ' + up.name + '  Lv' + level + '/' + up.levels, x + 44, rowY + 8);
     ctx.fillStyle = '#9aa3c7'; ctx.font = '13px system-ui, sans-serif';
@@ -232,7 +252,7 @@ export function drawGarage(ctx, state) {
     const active = g.paint === i;
     const tag = active ? 'SPRAYED' : owned ? 'OWNED' : '$' + paint.price;
     ctx.fillStyle = 'rgba(255,255,255,0.06)';
-    panel(ctx, x + 28, rowY, w - 56, 34, 8); ctx.fill();
+    panelPath(ctx, x + 28, rowY, w - 56, 34, 8); ctx.fill();
     ctx.fillStyle = paint.color;
     ctx.beginPath(); ctx.arc(x + 52, rowY + 17, 9, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#f2f4ff'; ctx.font = '15px system-ui, sans-serif';

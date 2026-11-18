@@ -43,6 +43,25 @@ and take the Harbor Vault heist finale.
   drive it with arcade physics (acceleration, steering, crashes, handbrake).
 - **Traffic and pedestrians** — NPC cars cruise the roads and turn at intersections; pedestrians
   stroll the sidewalks and scatter when a car barrels at them.
+- **VPD roadblocks + lockdown** — at wanted 3+ the VPD seals the road ahead of you:
+  two interceptor cars parked sideways across the street, three warning cones on the
+  approach, and a spike strip in the middle that shreds tyres (damage + speed loss).
+  Smash the block's cars open or drive around it; blocks stand down below 3 stars.
+  At wanted 5 the city locks down: chasers drive harder, a third block can be out at
+  once, and a second police helicopter joins the hunt. The HUD warns
+  “⚠ ROADBLOCK AHEAD — 320m” and the minimap marks every block red.
+- **Dynamic weather** — a real sky state machine (CLEAR / RAIN / FOG / STORM) that rolls
+  a new spell every ~90–150 seconds. Rain and storm make the roads slick (grip down,
+  longer braking, traffic slows, gun spread grows); fog cuts visibility; storms throw
+  lightning across the harbour with thunder. The sky, sun, lamps, sea and docks all
+  read the weather, the radio and the shopkeepers comment on it, the HUD shows the
+  forecast, and finishing a mission in the rain or a storm pays bonus score.
+- **Taxi fares + postcards** — 2–3 passengers wait on the roadside with a gold “$”;
+  press E to pick one up and drop them off before the meter runs out ($150–$400, more
+  for VIP fares on a tighter clock, streak bonuses for clean runs). Ten postcards hide
+  at fixed landmarks (Palm Boulevard, Harbor Park, East Pier, Neon Strip, the docks…),
+  $150 + score each — find all ten for a $1,000 POSTCARD HUNTER bonus. The HUD tracks
+  “POSTCARDS n/10” plus fares, streak and side income; both systems save with the game.
 - **Wanted level + police** — 1–5 stars; patrol cars chase, ram and shoot, more of them as the
   heat rises. At wanted 4 a **police helicopter** joins the hunt, hovering over you with a
   sweeping spotlight and firing from the air at wanted 5. Lay low and out of sight to cool
@@ -75,7 +94,7 @@ and take the Harbor Vault heist finale.
 | WASD / arrows | Move on foot / drive |
 | Mouse | Aim (on foot) |
 | Click / Space | Shoot (on foot) / handbrake (in car) |
-| E | Enter / exit car · open a shop when one is near · close a shop panel |
+| E | Enter / exit car · open a shop when one is near · pick up a waiting taxi passenger · close a shop panel |
 | H | Honk the horn (in a car) |
 | G | Open / close the Virelia Motors garage (near the garage) |
 | R | Change the radio station |
@@ -104,9 +123,9 @@ fixed scene in the game:
 | File | Scene |
 |---|---|
 | `screenshots/1-start.jpg` | Title screen — “12 MISSIONS · 3 DAYS · A CITY THAT REMEMBERS” over the living golden-hour city: traffic, patrol cars, pedestrians, palms and the beach behind the logo. |
-| `screenshots/2-play.jpg` | Golden-hour street action — Kai driving east past Virelia Motors with the Street Sweeper SMG, dense traffic, pedestrians, named signs and the radio ticker on screen. |
-| `screenshots/3-chase.jpg` | Police chase — VPD patrol cars and the police helicopter closing in at wanted level 5, Kai in a nitro-fitted car with engine Lv2 and the Long Pier Rifle. |
-| `screenshots/4-win.jpg` | Victory screen — all twelve jobs done across three days, the Harbor Vault heist and the final score banked, garage fully upgraded and every gun owned. |
+| `screenshots/2-play.jpg` | Golden-hour street action — Kai driving east past Virelia Motors with the Street Sweeper SMG, a waiting taxi fare with a gold “$” by the garage, dense traffic, pedestrians, named signs and the radio ticker on screen. |
+| `screenshots/3-chase.jpg` | Police chase in the rain — VPD roadblock with spike strip ahead, patrol cars and two police helicopters closing in at wanted level 5, Kai in a nitro-fitted car with engine Lv2 and the Long Pier Rifle. |
+| `screenshots/4-win.jpg` | Victory screen — all twelve jobs done across three days, the Harbor Vault heist and the final score banked, all 10 postcards found (10/10 in the HUD), garage fully upgraded and every gun owned. |
 
 Every shot is reproducible: open the game with `?shot=start|play|chase|win&seed=1` and the same
 seeded scene renders every time, so each screenshot above matches exactly what you see in the browser.
@@ -114,13 +133,16 @@ seeded scene renders every time, so each screenshot above matches exactly what y
 ## Tech
 
 Vanilla ES modules, canvas 2D. Source is split by responsibility under `game/src/`:
-`config.js` (tuning + story + shops + radio), `world.js` (city generation, palms, parked cars),
-`coast.js` (east coast: beach, ocean, boulevard), `district.js` (Portside docks + district labels),
-`daynight.js` (day/night cycle, golden hour, sun, moon, stars), `missions.js` (missions 1–4),
-`missions2.js` (missions 5–6), `missions3.js` (missions 7–12, Day 3 heist finale),
-`radio.js` (stations + ticker), `shops.js` (Harbor Arms, Pier 9 Diner, Neon Mart),
-`weapons.js` (four guns, ammo, pickups), `garage.js` (Virelia Motors upgrades + paint),
-`player.js`, `traffic.js`, `police.js`, `heli.js` (police helicopter), `render.js`, `hud.js`,
+`config.js` (tuning + story + shops + radio + roadblocks/weather/taxi constants),
+`world.js` (city generation, palms, parked cars), `coast.js` (east coast: beach,
+ocean, boulevard), `district.js` (Portside docks + district labels), `daynight.js`
+(day/night cycle, golden hour, sun, moon, stars), `weather.js` (dynamic weather:
+clear/rain/fog/storm, grip, lightning), `wanted.js` (VPD roadblocks + lockdown),
+`side.js` (taxi fares + postcards), `missions.js` (missions 1–4), `missions2.js`
+(missions 5–6), `missions3.js` (missions 7–12, Day 3 heist finale), `radio.js`
+(stations + ticker), `shops.js` (Harbor Arms, Pier 9 Diner, Neon Mart), `weapons.js`
+(four guns, ammo, pickups), `garage.js` (Virelia Motors upgrades + paint), `player.js`,
+`traffic.js`, `police.js`, `heli.js` (police helicopter), `render.js`, `hud.js`,
 `audio.js`, `input.js`, `shots.js`, `main.js`.
 
 Built by an AI agent for make.fun's “Make GTA 6” bounty, $1,666 in USDC.

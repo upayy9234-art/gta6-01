@@ -1,6 +1,8 @@
 // Police helicopter: spawns once the wanted level hits 4, hovers above the
 // player with a lag and a bob, shines a spotlight, and shoots from the air
-// at wanted level 5. One heli at most; it leaves when the heat drops below 4.
+// at wanted level 5. One heli at most — until lockdown: at wanted 5 a second
+// heli joins from the opposite side, so the pair brackets Kai from both
+// directions. Both leave when the heat drops below 4.
 // During the Day 3 finale the heli sweeps its spotlight in a slow circle while
 // it hunts, so the chase reads even from the minimap.
 import { HELI } from './config.js';
@@ -12,14 +14,31 @@ export function heliSpotlightAlpha(state) {
   return 0.06 + 0.16 * (1 - daylight(state.timeOfDay));
 }
 
+function heliCountFor(wanted) {
+  if (wanted >= 5) return 2;
+  if (wanted >= 4) return 1;
+  return 0;
+}
+
+function spawnHeli(state, second) {
+  return {
+    x: state.player.x + (second ? -240 : 220),
+    y: state.player.y + (second ? 260 : -260),
+    angle: 0,
+    bob: 0,
+    fireCooldown: 0.6,
+    rotorPhase: 0,
+    rotorCd: 0,
+    sweep: second ? Math.PI : 0,
+  };
+}
+
 export function ensureHeli(state) {
-  const want = state.player.wanted >= 4 ? 1 : 0;
+  // Wanted 5 (lockdown) flies two helis, wanted 4 flies one, below 4 none.
+  // The second heli spawns from the opposite side so the pair brackets Kai.
+  const want = heliCountFor(state.player.wanted);
   if (state.helis.length < want) {
-    state.helis.push({
-      x: state.player.x + 220, y: state.player.y - 260,
-      angle: 0, bob: 0, fireCooldown: 0.6, rotorPhase: 0, rotorCd: 0,
-      sweep: 0,
-    });
+    state.helis.push(spawnHeli(state, state.helis.length === 1));
     state.audio?.siren();
   }
   while (state.helis.length > want) state.helis.pop();
@@ -39,7 +58,10 @@ export function updateHeli(heli, dt, state) {
   heli.rotorCd -= dt;
   // Slow spotlight sweep: the cone swings around the player while it hunts.
   heli.sweep = (heli.sweep ?? 0) + dt * 0.7;
-  if (heli.rotorCd <= 0) { heli.rotorCd = 0.5; state.audio?.rotor(); }
+  if (heli.rotorCd <= 0) {
+    heli.rotorCd = 0.5;
+    state.audio?.rotor();
+  }
   // At wanted 5 the heli fires down at the player.
   heli.fireCooldown -= dt;
   const d = Math.hypot(px - heli.x, py - (heli.y + heli.bob));
@@ -47,9 +69,12 @@ export function updateHeli(heli, dt, state) {
     heli.fireCooldown = HELI.fireInterval;
     const a = Math.atan2(py - heli.y, px - heli.x) + (state.random.next() - 0.5) * 0.18;
     state.bullets.push({
-      x: heli.x, y: heli.y + heli.bob,
-      vx: Math.cos(a) * HELI.bulletSpeed, vy: Math.sin(a) * HELI.bulletSpeed,
-      life: 0.9, fromPolice: true,
+      x: heli.x,
+      y: heli.y + heli.bob,
+      vx: Math.cos(a) * HELI.bulletSpeed,
+      vy: Math.sin(a) * HELI.bulletSpeed,
+      life: 0.9,
+      fromPolice: true,
     });
     state.audio?.shoot();
   }

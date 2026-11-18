@@ -1,8 +1,9 @@
-// Neon Harbor round 5 — interactive CDP play-test + deterministic screenshots.
+// Neon Harbor round 8 — interactive CDP play-test + deterministic screenshots.
 // Drives headless Chromium over raw CDP (no Playwright dependency), serves
 // game/ from a tiny static server, and asserts the real game loop works:
 // attract mode (no input, city moves), radio ticker, shop buy, save/continue,
-// missions 7→12 + finale win, garage buy, weapon pickup. Then captures the
+// missions 7→12 + finale win, garage buy, weapon pickup, roadblocks + lockdown,
+// dynamic weather grip, taxi fares + postcards. Then captures the
 // 4 deterministic screenshots (1280x720 JPEG q88, each <= 256 KiB).
 // Run: node tests/cdp.mjs   (exit 0 = all pass)
 import { createServer } from 'node:http';
@@ -227,6 +228,75 @@ check('game starts on Space', (await evalJs('window.__neonHarbor().screen')) ===
 
 check('no console errors during play', consoleErrors.length === 0, consoleErrors.join(' | ').slice(0, 400));
 check('no failed requests', failedRequests.length === 0, failedRequests.join(', '));
+
+// ============ 7b. ROUND 8: roadblocks, weather grip, taxi + postcards ============
+{
+  const step = async (seconds = 0.5) => {
+    await evalJs(`(() => { const s = window.__neonHarbor(); const input = { up:()=>false, down:()=>false, left:()=>false, right:()=>false, moveX:()=>0, run:()=>false, shooting:()=>false, mouse:()=>({x:640,y:360}) }; for (let i=0;i<${Math.round(seconds * 60)};i++) s.stepWorld(1/60, input); })()`);
+  };
+  // Roadblocks spawn at wanted 3, escalate at 4, stand down below 3.
+  await evalJs(`(() => { const s = window.__neonHarbor(); s.player.wanted = 3; s.roadblocks.spawnCd = 0; })()`);
+  await step(0.5);
+  const rb1 = await evalJs('({ n: window.__neonHarbor().roadblocks.list.length, cars: window.__neonHarbor().cars.filter(c=>c.roadblock).length })');
+  check('roadblock spawns at wanted 3 (2 parked cars)', rb1.n >= 1 && rb1.cars >= 2, JSON.stringify(rb1));
+  await evalJs(`(() => { const s = window.__neonHarbor(); s.player.wanted = 4; s.roadblocks.spawnCd = 0; })()`);
+  await step(0.5);
+  await evalJs(`(() => { const s = window.__neonHarbor(); s.roadblocks.spawnCd = 0; })()`);
+  await step(0.5);
+  const rb2 = await evalJs('window.__neonHarbor().roadblocks.list.length');
+  check('roadblock escalates to 3 at wanted 4', rb2 >= 3, `blocks=${rb2}`);
+  // Second heli at wanted 5 (lockdown).
+  await evalJs(`(() => { const s = window.__neonHarbor(); s.player.wanted = 5; })()`);
+  await step(0.5);
+  const helis = await evalJs('window.__neonHarbor().helis.length');
+  check('lockdown flies 2 helis at wanted 5', helis === 2, `helis=${helis}`);
+  await evalJs(`(() => { const s = window.__neonHarbor(); s.player.wanted = 0; })()`);
+  await step(0.5);
+  const rb0 = await evalJs('({ n: window.__neonHarbor().roadblocks.list.length, cars: window.__neonHarbor().cars.filter(c=>c.roadblock).length })');
+  check('roadblocks stand down below wanted 3', rb0.n === 0 && rb0.cars === 0, JSON.stringify(rb0));
+  // Weather: the sky rolls a new kind when the spell timer runs out.
+  await evalJs(`(() => { const s = window.__neonHarbor(); s.weather.timer = 0.01; s.weather.kind = 'clear'; })()`);
+  await step(0.5);
+  const w = await evalJs('({ kind: window.__neonHarbor().weather.kind, spells: window.__neonHarbor().weather.spells })');
+  check('weather rolls a new spell when the timer ends', w.spells >= 1 && w.kind !== 'clear', JSON.stringify(w));
+  // Rain grip: same car, same throttle, 0.5 s — rain must be clearly slower.
+  const gripTest = async (kind, grip) => {
+    return await evalJs(`(() => { const s = window.__neonHarbor(); s.weather.kind = '${kind}'; s.weather.gripMul = ${grip}; s.weather.timer = 999; const car = s.cars.find((c) => !c.police && !c.npc && !c.roadblock) || s.cars[0]; for (const c of s.cars) { if (c !== car) { c.x = 388; c.y = 2132; c.speed = 0; } } car.x = 1000; car.y = 388; car.angle = 0; car.speed = 0; s.player.inCar = car; s.player.x = car.x; s.player.y = car.y; s.player.wanted = 0; const input = { up:()=>true, down:()=>false, left:()=>false, right:()=>false, moveX:()=>0, run:()=>false, shooting:()=>false, mouse:()=>({x:640,y:360}) }; for (let i=0;i<30;i++) s.stepWorld(1/60, input); const v = car.speed; s.player.inCar = null; return Math.round(v); })()`);
+  };
+  const drySpeed = await gripTest('clear', 1);
+  const rainSpeed = await gripTest('rain', 0.82);
+  check('rain grip: slower than dry after 0.5 s full throttle', rainSpeed < drySpeed - 10, `dry=${drySpeed} rain=${rainSpeed}`);
+  // Taxi: E picks up a waiting passenger, drop-off pays.
+  const farePos = await evalJs(`(() => { const s = window.__neonHarbor(); const shops = [{x:520,y:430},{x:3050,y:720},{x:1300,y:860}]; const fare = s.side.fares.find((f) => f.waiting && shops.every((sh) => Math.hypot(f.x - sh.x, f.y - sh.y) > 150)) || s.side.fares[0]; s.player.x = fare.x; s.player.y = fare.y; s.player.inCar = null; s.player.wanted = 0; return { x: fare.x, y: fare.y }; })()`);
+  await sleep(200);
+  await key('KeyE', 'e');
+  await sleep(200);
+  const fare = await evalJs('(() => { const f = window.__neonHarbor().side.activeFare; return f ? { pay: f.pay, timer: Math.ceil(f.timer), dest: f.dest } : null; })()');
+  check('E picks up a taxi passenger', fare !== null && fare.pay >= 150, JSON.stringify(fare));
+  if (fare) {
+    const moneyBefore = await evalJs('window.__neonHarbor().player.money');
+    await evalJs(`(() => { const s = window.__neonHarbor(); const f = s.side.activeFare; s.player.x = f.dest.x; s.player.y = f.dest.y; const input = { up:()=>false, down:()=>false, left:()=>false, right:()=>false, moveX:()=>0, run:()=>false, shooting:()=>false, mouse:()=>({x:640,y:360}) }; for (let i=0;i<5;i++) s.stepWorld(1/60, input); })()`);
+    const paid = await evalJs('({ done: window.__neonHarbor().side.faresDone, money: window.__neonHarbor().player.money })');
+    check('taxi drop-off pays the fare', paid.done >= 1 && paid.money === moneyBefore + fare.pay, JSON.stringify(paid));
+  }
+  // VIP fare pays double.
+  await evalJs(`(() => { const s = window.__neonHarbor(); const p = s.player; s.side.fares = [{ x: p.x, y: p.y, waiting: true, dest: null, timer: 0, pay: 0, vip: true, id: 777 }]; s.side.activeFare = null; })()`);
+  await sleep(200);
+  await key('KeyE', 'e');
+  await sleep(200);
+  const vip = await evalJs('(() => { const f = window.__neonHarbor().side.activeFare; return f ? f.pay : null; })()');
+  check('VIP fare pays at least $300', vip !== null && vip >= 300, `pay=$${vip}`);
+  // Postcard at Palm Boulevard (2930,500) pays +$150.
+  const pcBefore = await evalJs('({ n: window.__neonHarbor().side.collected, money: window.__neonHarbor().player.money })');
+  await evalJs(`(() => { const s = window.__neonHarbor(); s.player.x = 2930; s.player.y = 500; s.player.inCar = null; const input = { up:()=>false, down:()=>false, left:()=>false, right:()=>false, moveX:()=>0, run:()=>false, shooting:()=>false, mouse:()=>({x:640,y:360}) }; for (let i=0;i<10;i++) s.stepWorld(1/60, input); })()`);
+  const pcAfter = await evalJs('({ n: window.__neonHarbor().side.collected, money: window.__neonHarbor().player.money })');
+  check('postcard Palm Boulevard +$150', pcAfter.n === pcBefore.n + 1 && pcAfter.money === pcBefore.money + 150, JSON.stringify(pcAfter));
+  // 10th postcard pays the $1,000 hunter bonus.
+  const hbBefore = await evalJs('window.__neonHarbor().player.money');
+  await evalJs(`(() => { const s = window.__neonHarbor(); for (const c of s.side.postcards) c.taken = true; s.side.postcards[9].taken = false; s.side.collected = 9; s.side.hunterBonusPaid = false; s.player.x = s.side.postcards[9].x; s.player.y = s.side.postcards[9].y; const input = { up:()=>false, down:()=>false, left:()=>false, right:()=>false, moveX:()=>0, run:()=>false, shooting:()=>false, mouse:()=>({x:640,y:360}) }; for (let i=0;i<10;i++) s.stepWorld(1/60, input); })()`);
+  const hbAfter = await evalJs('({ n: window.__neonHarbor().side.collected, money: window.__neonHarbor().player.money, hunter: window.__neonHarbor().side.hunterBonusPaid })');
+  check('10th postcard pays $1,000 hunter bonus', hbAfter.n === 10 && hbAfter.money === hbBefore + 150 + 1000 && hbAfter.hunter === true, JSON.stringify(hbAfter));
+}
 
 // ============ 8. SCREENSHOTS (deterministic ?shot= modes, seed=1) ============
 // Wipe the play-test's save/best first: the shipped screenshots must show a

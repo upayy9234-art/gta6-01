@@ -17,8 +17,9 @@ const here = fileURLToPath(new URL('.', import.meta.url));
 const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
 
 // Pre-flight: every source module the game needs must be present, and the
-// entry point must import all nine round-5 modules — a half-wired build
-// must fail here, never at the judge.
+// entry point must import the round-5 modules plus the three round-8 systems
+// (weather, roadblocks, side hustles) — a half-wired build must fail here,
+// never at the judge.
 const REQUIRED_MODULES = [
   'game/index.html',
   'game/src/audio.js', 'game/src/coast.js', 'game/src/config.js',
@@ -28,13 +29,14 @@ const REQUIRED_MODULES = [
   'game/src/missions3.js', 'game/src/player.js', 'game/src/police.js',
   'game/src/radio.js', 'game/src/random.js', 'game/src/render.js',
   'game/src/shops.js', 'game/src/shots.js', 'game/src/traffic.js',
+  'game/src/wanted.js', 'game/src/weather.js', 'game/src/side.js',
   'game/src/weapons.js', 'game/src/world.js',
 ];
 for (const rel of REQUIRED_MODULES) {
   if (!existsSync(join(here, rel))) throw new Error('missing required module: ' + rel);
 }
 const mainJs = readFileSync(join(here, 'game/src/main.js'), 'utf8');
-for (const mod of ['./district.js', './daynight.js', './garage.js', './weapons.js', './missions2.js', './coast.js', './missions3.js', './radio.js', './shops.js']) {
+for (const mod of ['./district.js', './daynight.js', './garage.js', './weapons.js', './missions2.js', './coast.js', './missions3.js', './radio.js', './shops.js', './wanted.js', './weather.js', './side.js']) {
   if (!mainJs.includes(mod)) throw new Error('game/src/main.js does not import ' + mod);
 }
 

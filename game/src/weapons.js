@@ -2,7 +2,9 @@
 // The pistol is infinite and always owned; the other three are found as
 // pickups around the city (roads, Harbor Park, the Portside quay — never
 // inside a building) or bought as ammo at Harbor Arms (see shops.js).
-// Keys 1–4 switch between owned guns.
+// Keys 1–4 switch between owned guns. Bad weather throws aim off: bullet
+// spread grows in rain and more in a storm, so a shootout in the wet feels
+// different from one under a clear sky.
 export const WEAPONS = {
   pistol: {
     id: 'pistol', key: '1', name: 'Pistol', short: 'Pistol',
@@ -58,6 +60,7 @@ export function weaponsOwnedCount(state) {
 
 // Shop ammo: tops a gun up (and marks it owned if it was not). Caps at the
 // gun's full mag size so a shopping spree never stacks absurd reserves.
+// Returns how much ammo actually landed.
 export function addAmmo(state, weaponId, amount) {
   const w = state.weapons;
   if (!w || !WEAPONS[weaponId]) return 0;
@@ -86,6 +89,15 @@ export function switchWeapon(state, key) {
   return true;
 }
 
+// Wet-weather spread multiplier: storm throws aim off most, rain less,
+// fog and clear leave the guns alone.
+export function weatherSpreadMul(state) {
+  const kind = state.weather ? state.weather.kind : 'clear';
+  if (kind === 'storm') return 1.5;
+  if (kind === 'rain') return 1.35;
+  return 1;
+}
+
 export function fireWeapon(player, state) {
   const w = state.weapons;
   if (!w) return false;
@@ -102,8 +114,9 @@ export function fireWeapon(player, state) {
   player.fireCooldown = weapon.interval;
   const ox = player.x + Math.cos(player.angle) * 22;
   const oy = player.y + Math.sin(player.angle) * 22;
+  const spread = weapon.spread * weatherSpreadMul(state);
   for (let i = 0; i < weapon.pellets; i += 1) {
-    const a = player.angle + (state.random.next() - 0.5) * 2 * weapon.spread;
+    const a = player.angle + (state.random.next() - 0.5) * 2 * spread;
     state.bullets.push({
       x: ox, y: oy,
       vx: Math.cos(a) * weapon.speed, vy: Math.sin(a) * weapon.speed,
@@ -170,18 +183,26 @@ export function drawWeaponPickups(ctx, state) {
     const weapon = WEAPONS[pk.id];
     const pulse = 1 + Math.sin(state.time * 4 + pk.x) * 0.12;
     // Pulsing cyan ring on the ground.
-    ctx.strokeStyle = '#22e6ff'; ctx.lineWidth = 2.5;
+    ctx.strokeStyle = '#22e6ff';
+    ctx.lineWidth = 2.5;
     ctx.beginPath(); ctx.arc(pk.x, pk.y, 26 * pulse, 0, Math.PI * 2); ctx.stroke();
     ctx.fillStyle = 'rgba(34,230,255,0.10)';
     ctx.beginPath(); ctx.arc(pk.x, pk.y, 26 * pulse, 0, Math.PI * 2); ctx.fill();
     // Gun crate: dark box, gold trim, barrel poking out.
-    ctx.fillStyle = '#1c1f2e'; ctx.fillRect(pk.x - 15, pk.y - 10, 30, 20);
-    ctx.strokeStyle = '#ffc53d'; ctx.lineWidth = 2; ctx.strokeRect(pk.x - 15, pk.y - 10, 30, 20);
-    ctx.strokeStyle = weapon.color; ctx.lineWidth = 3;
+    ctx.fillStyle = '#1c1f2e';
+    ctx.fillRect(pk.x - 15, pk.y - 10, 30, 20);
+    ctx.strokeStyle = '#ffc53d';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(pk.x - 15, pk.y - 10, 30, 20);
+    ctx.strokeStyle = weapon.color;
+    ctx.lineWidth = 3;
     ctx.beginPath(); ctx.moveTo(pk.x - 8, pk.y); ctx.lineTo(pk.x + 14, pk.y); ctx.stroke();
-    ctx.fillStyle = weapon.color; ctx.fillRect(pk.x - 12, pk.y - 4, 8, 8);
+    ctx.fillStyle = weapon.color;
+    ctx.fillRect(pk.x - 12, pk.y - 4, 8, 8);
     // Name label above the crate.
-    ctx.fillStyle = '#e8ecff'; ctx.font = 'bold 11px system-ui, sans-serif'; ctx.textAlign = 'center';
+    ctx.fillStyle = '#e8ecff';
+    ctx.font = 'bold 11px system-ui, sans-serif';
+    ctx.textAlign = 'center';
     ctx.fillText(weapon.short.toUpperCase(), pk.x, pk.y - 34);
   }
 }

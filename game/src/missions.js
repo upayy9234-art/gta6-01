@@ -3,7 +3,10 @@
 // Progress saves. Jobs 1–4 live here; jobs 5–6 (Portside docks, the last stand)
 // live in missions2.js; jobs 7–12 (Day 3, the Harbor Vault heist finale) live
 // in missions3.js. The HUD always shows "MISSION n/12" plus the stage.
-import { MISSIONS, MISSION_REWARD, WORLD } from './config.js';
+// Every job is a tiny state machine on state.missions: `stage` walks
+// go -> grab -> escape (or go -> done for the simple ones), and `timer`
+// counts how long Kai has been on the job.
+import { MISSIONS, MISSION_REWARD } from './config.js';
 import { makeCar } from './traffic.js';
 import { updateExtraMissions, extraMissionWaypoint, extraMissionProgressText } from './missions2.js';
 import { updateDay3Missions, day3Waypoint, day3ProgressText } from './missions3.js';
@@ -17,10 +20,29 @@ export const MISSION_WAYPOINTS = [
 export const HIDEOUT = { x: 420, y: 420 };
 
 export function createMissions() {
-  return { index: 0, stage: 'go', done: false, targetCar: null, grabbed: false, timer: 0, banner: '' };
+  return {
+    index: 0,
+    stage: 'go',
+    done: false,
+    targetCar: null,
+    grabbed: false,
+    timer: 0,
+    banner: '',
+  };
 }
 
-export function currentMission(missions) { return MISSIONS[missions.index] ?? null; }
+export function currentMission(missions) {
+  return MISSIONS[missions.index] ?? null;
+}
+
+// Finishing a job in the wet pays extra score — rain +50, storm +100.
+// Cash never changes; only the score remembers the weather.
+export function missionWeatherBonus(state) {
+  const kind = state.weather ? state.weather.kind : 'clear';
+  if (kind === 'storm') return 100;
+  if (kind === 'rain') return 50;
+  return 0;
+}
 
 // "MISSION 7/12 — THE CREW CALLS" for the panel header.
 export function missionCounterText(state) {
@@ -28,7 +50,8 @@ export function missionCounterText(state) {
   if (m.done) return 'MISSION 12/12 — DONE';
   const mission = MISSIONS[m.index];
   const day = mission ? mission.day : 1;
-  return 'MISSION ' + (m.index + 1) + '/12 · DAY ' + day + ' — ' + (mission ? mission.title.replace(/^MISSION \d+ — /, '') : '');
+  const title = mission ? mission.title.replace(/^MISSION \d+ — /, '') : '';
+  return 'MISSION ' + (m.index + 1) + '/12 · DAY ' + day + ' — ' + title;
 }
 
 export function missionWaypoint(state) {
@@ -39,65 +62,100 @@ export function missionWaypoint(state) {
   // Jobs 5–6 are owned by missions2.js (Portside crates, the last stand).
   if (m.index >= 4) return extraMissionWaypoint(state);
   if (m.index === 1 && m.targetCar) return { x: m.targetCar.x, y: m.targetCar.y };
-  if ((m.index === 2 || m.index === 3) && m.stage === 'escape') return HIDEOUT;
+  if ((m.index === 2 || m.index === 3) && m.stage === 'escape') return { ...HIDEOUT };
   return MISSION_WAYPOINTS[m.index];
 }
 
 export function startMissionTwo(state, random) {
   // Dario's violet coupe spawns ahead of the player and flees.
-  const car = makeCar(state.player.x + 260, state.player.y - 60, 0, { name: 'Violet Coupe', color: '#c94dff', speed: 1.0 }, { npc: true });
-  car.speed = 240; car.health = 60; car.target = 'dario';
+  const car = makeCar(
+    state.player.x + 260, state.player.y - 60, 0,
+    { name: 'Violet Coupe', color: '#c94dff', speed: 1.0 },
+    { npc: true },
+  );
+  car.speed = 240;
+  car.health = 60;
+  car.target = 'dario';
   state.cars.push(car);
   state.missions.targetCar = car;
   state.missions.banner = 'Dario is fleeing in the violet coupe — ram him!';
+}
+
+function playerPosition(state) {
+  const p = state.player;
+  return p.inCar ? { x: p.inCar.x, y: p.inCar.y } : { x: p.x, y: p.y };
+}
+
+function updateParcelJob(state) {
+  const w = MISSION_WAYPOINTS[0];
+  const pos = playerPosition(state);
+  if (Math.hypot(pos.x - w.x, pos.y - w.y) < 70) {
+    completeMission(state, 'Parcel delivered! +$400');
+  }
+}
+
+function updateTailJob(state, dt) {
+  const m = state.missions;
+  const t = m.targetCar;
+  const pos = playerPosition(state);
+  if (!t) return;
+  if (t.health <= 0) {
+    completeMission(state, 'Dario stopped! +$900');
+    return;
+  }
+  // Dario flees away from the player along roads.
+  const away = Math.atan2(t.y - pos.y, t.x - pos.x);
+  t.angle += (away - t.angle) * dt * 0.5;
+  t.speed = Math.min(430, t.speed + 40 * dt);
+  t.x += Math.cos(t.angle) * t.speed * dt;
+  t.y += Math.sin(t.angle) * t.speed * dt;
+}
+
+function updateScoreJob(state, index) {
+  // Vault (3) and Neon Strip (4) share the go -> grab -> escape shape.
+  const m = state.missions;
+  const p = state.player;
+  const pos = playerPosition(state);
+  const isStrip = index === 3;
+  if (m.stage === 'go') {
+    const w = MISSION_WAYPOINTS[index];
+    if (Math.hypot(pos.x - w.x, pos.y - w.y) >= 80) return;
+    m.stage = 'grab';
+    m.grabbed = true;
+    p.money += isStrip ? 2000 : 1500;
+    m.banner = isStrip
+      ? 'Casino cash grabbed! The heli is on you — escape to the hideout!'
+      : 'Cash grabbed! Now escape to the hideout — the whole VPD is coming!';
+    p.wanted = Math.max(p.wanted, isStrip ? 5 : 3);
+  } else if (m.stage === 'grab') {
+    m.stage = 'escape';
+  } else if (m.stage === 'escape') {
+    if (Math.hypot(pos.x - HIDEOUT.x, pos.y - HIDEOUT.y) < 80) {
+      completeMission(
+        state,
+        isStrip ? 'THE NEON STRIP IS YOURS! +$3,000' : 'THE SCORE IS YOURS! +$2,200',
+      );
+    }
+  }
 }
 
 export function updateMissions(state, dt) {
   const m = state.missions;
   if (m.done) return;
   // Day 3 (jobs 7–12) is owned by missions3.js — hand the update over.
-  if (m.index >= 6) { updateDay3Missions(state, dt); return; }
-  // Jobs 5–6 are owned by missions2.js — hand the whole update over.
-  if (m.index >= 4) { updateExtraMissions(state, dt); return; }
-  const p = state.player;
-  const px = p.inCar ? p.inCar.x : p.x;
-  const py = p.inCar ? p.inCar.y : p.y;
-  m.timer += dt;
-  if (m.index === 0) {
-    const w = MISSION_WAYPOINTS[0];
-    if (Math.hypot(px - w.x, py - w.y) < 70) completeMission(state, 'Parcel delivered! +$400');
-  } else if (m.index === 1) {
-    const t = m.targetCar;
-    if (t && t.health <= 0) completeMission(state, 'Dario stopped! +$900');
-    else if (t) {
-      // Dario flees away from the player along roads.
-      const away = Math.atan2(t.y - py, t.x - px);
-      t.angle += (away - t.angle) * dt * 0.5;
-      t.speed = Math.min(430, t.speed + 40 * dt);
-      t.x += Math.cos(t.angle) * t.speed * dt;
-      t.y += Math.sin(t.angle) * t.speed * dt;
-    }
-  } else if (m.index === 2 || m.index === 3) {
-    // Vault (3) and Neon Strip (4) share the go -> grab -> escape shape.
-    const isStrip = m.index === 3;
-    if (m.stage === 'go') {
-      const w = MISSION_WAYPOINTS[m.index];
-      if (Math.hypot(px - w.x, py - w.y) < 80) {
-        m.stage = 'grab'; m.grabbed = true;
-        p.money += isStrip ? 2000 : 1500;
-        m.banner = isStrip
-          ? 'Casino cash grabbed! The heli is on you — escape to the hideout!'
-          : 'Cash grabbed! Now escape to the hideout — the whole VPD is coming!';
-        p.wanted = Math.max(p.wanted, isStrip ? 5 : 3);
-      }
-    } else if (m.stage === 'grab') {
-      m.stage = 'escape';
-    } else if (m.stage === 'escape') {
-      if (Math.hypot(px - HIDEOUT.x, py - HIDEOUT.y) < 80) {
-        completeMission(state, isStrip ? 'THE NEON STRIP IS YOURS! +$3,000' : 'THE SCORE IS YOURS! +$2,200');
-      }
-    }
+  if (m.index >= 6) {
+    updateDay3Missions(state, dt);
+    return;
   }
+  // Jobs 5–6 are owned by missions2.js — hand the whole update over.
+  if (m.index >= 4) {
+    updateExtraMissions(state, dt);
+    return;
+  }
+  m.timer += dt;
+  if (m.index === 0) updateParcelJob(state);
+  else if (m.index === 1) updateTailJob(state, dt);
+  else if (m.index === 2 || m.index === 3) updateScoreJob(state, m.index);
 }
 
 export function completeMission(state, message) {
@@ -106,9 +164,11 @@ export function completeMission(state, message) {
   state.player.money += reward;
   m.banner = message;
   state.audio?.mission();
-  state.score += 1000 * (m.index + 1);
+  state.score += 1000 * (m.index + 1) + missionWeatherBonus(state);
   m.index += 1;
-  m.stage = 'go'; m.targetCar = null; m.timer = 0;
+  m.stage = 'go';
+  m.targetCar = null;
+  m.timer = 0;
   if (m.index >= MISSIONS.length) {
     m.done = true;
     state.screen = 'win';

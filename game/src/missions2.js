@@ -3,6 +3,8 @@
 // stand: survive the full fury of the VPD, put six of their cars down, and run
 // for the East Pier. Missions 1–4 live in missions.js; missions 7–12 (Day 3)
 // live in missions3.js; this module plugs in when state.missions.index is 4–5.
+// Both jobs share the crate/job state in state.extra: crates, a stage, a kill
+// counter and a survival clock.
 import { MISSION_REWARD, MISSIONS } from './config.js';
 import { PORTSIDE, nextCrate } from './district.js';
 
@@ -24,6 +26,14 @@ export function createExtraMissions() {
 function playerPosition(state) {
   const p = state.player;
   return p.inCar ? { x: p.inCar.x, y: p.inCar.y } : { x: p.x, y: p.y };
+}
+
+// Same wet-weather score bonus as missions 1–4 (rain +50, storm +100).
+export function extraWeatherBonus(state) {
+  const kind = state.weather ? state.weather.kind : 'clear';
+  if (kind === 'storm') return 100;
+  if (kind === 'rain') return 50;
+  return 0;
 }
 
 function updatePortsideJob(state, dt) {
@@ -128,9 +138,11 @@ export function completeExtraMission(state, message) {
   state.player.money += reward;
   m.banner = message;
   state.audio?.mission();
-  state.score += 1000 * (m.index + 1);
+  state.score += 1000 * (m.index + 1) + extraWeatherBonus(state);
   m.index += 1;
-  m.stage = 'go'; m.targetCar = null; m.timer = 0;
+  m.stage = 'go';
+  m.targetCar = null;
+  m.timer = 0;
   state.extra = createExtraMissions();
   if (m.index >= MISSIONS.length) {
     m.done = true;
