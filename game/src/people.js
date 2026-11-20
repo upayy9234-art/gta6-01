@@ -5,6 +5,10 @@
 // from gunfire and fast cars, and fall down (simple ragdoll: tip over and
 // stay down) when hit. The player character in player.js is built from the
 // same factory with a distinctive Hawaiian-shirt texture.
+// Round 11: pedestrians talk. A throttled bark system listens to the world
+// — calm small-talk on a quiet street, job-board gossip while the player
+// is working, and full-throated panic once the SBPD is hunting — and floats
+// the nearest pedestrian's line over the HUD for a few seconds.
 // ============================================================================
 (function () {
 'use strict';
@@ -13,6 +17,8 @@ window.SH = window.SH || {};
 var C = SH.Config;
 var U = SH.U;
 var peds = [];
+var barkTimer = 5;         // seconds until the next possible bark
+var barkPed = null;        // the ped currently "speaking" (highlighted)
 
 var headGeo = new THREE.SphereGeometry(0.21, 10, 8);
 var torsoGeo = new THREE.BoxGeometry(0.52, 0.72, 0.28);
@@ -192,6 +198,34 @@ function updatePed(ped, dt) {
   }
 }
 
+// --- Round 11: barks ----------------------------------------------------------
+// Every few seconds, if a standing pedestrian is close enough to overhear,
+// they say something that fits the moment. The speaker turns to face the
+// player for the line — a tiny touch that sells the whole system.
+function updateBarks(dt) {
+  barkTimer -= dt;
+  if (barkTimer > 0) return;
+  barkTimer = SH.rng.range(6, 11);
+  if (!SH.Player || !SH.Player.pos || !SH.HUD || !SH.HUD.setBark) return;
+  if (SH.G.mode !== 'playing') return;
+  var pp = SH.Player.pos;
+  var best = null, bd = 15 * 15;
+  for (var i = 0; i < peds.length; i++) {
+    var ped = peds[i];
+    if (ped.state !== 'walk' && ped.state !== 'flee' && ped.state !== 'wait') continue;
+    var d = U.dist2(pp.x, pp.z, ped.pos.x, ped.pos.z);
+    if (d < bd) { bd = d; best = ped; }
+  }
+  if (!best) return;
+  var pool = C.barks.calm;
+  if (SH.Police && SH.Police.stars > 0) pool = C.barks.wanted;
+  else if (SH.Jobs && SH.Jobs.active()) pool = C.barks.job;
+  else if (best.state === 'flee') pool = C.barks.wanted;
+  barkPed = best;
+  best.heading = U.bearing(pp.x - best.pos.x, pp.z - best.pos.z);
+  SH.HUD.setBark('“' + SH.rng.pick(pool) + '”');
+}
+
 SH.People = {
   list: peds,
   makePersonMesh: makePersonMesh,
@@ -235,6 +269,7 @@ SH.People = {
 
   update: function (dt) {
     for (var i = 0; i < peds.length; i++) updatePed(peds[i], dt);
+    updateBarks(dt);
     // recycle peds that have been down a long while: an ambulance of
     // narrative convenience — they get up far away as fresh pedestrians.
     for (var j = 0; j < peds.length; j++) {

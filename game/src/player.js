@@ -5,6 +5,10 @@
 // (the traffic driver bails out and runs); while driving, the same camera
 // chases the car and the shared vehicle physics takes over. F fires a
 // hitscan shot on foot. Owns health, damage and the enter/exit logic.
+// Round 11 game feel: taking damage now answers back — a red edge-flash on
+// the HUD and a short camera shake scaled by the hit, so a graze trembles
+// and a wreck genuinely rattles. The engine call also forwards road speed
+// so audio.js can run its speed-hum layer.
 // ============================================================================
 (function () {
 'use strict';
@@ -26,6 +30,8 @@ var flashMesh = null;
 var flashT = 0;
 var lastDamageT = -99;
 var promptCar = null;
+var shakeAmp = 0;            // Round 11: camera shake amplitude, decays fast
+var shakeT = 0;
 
 var P = {
   pos: null,                 // THREE.Vector3 (mesh position)
@@ -167,6 +173,26 @@ function shoot() {
   }
 }
 
+// Round 11: apply the decaying shake on top of whichever camera the mode
+// update just placed. Random offsets each frame at ~30 Hz read as impact,
+// not as camera drift, and the amplitude envelope keeps it honest.
+function applyShake(dt) {
+  if (shakeAmp <= 0.003) { shakeAmp = 0; return; }
+  shakeT -= dt;
+  if (shakeT <= 0) {
+    shakeT = 0.033;
+    var cam = SH.camera;
+    cam.position.x += (Math.random() - 0.5) * shakeAmp;
+    cam.position.y += (Math.random() - 0.5) * shakeAmp * 0.7;
+    cam.position.z += (Math.random() - 0.5) * shakeAmp;
+  }
+  shakeAmp *= Math.pow(0.0015, dt); // fast decay: ~gone in half a second
+}
+
+function addShake(amount) {
+  shakeAmp = Math.min(0.55, shakeAmp + amount);
+}
+
 // --- per-frame update --------------------------------------------------------------
 function updateOnFoot(dt) {
   var K = SH.Keys;
@@ -215,25 +241,29 @@ function updateOnFoot(dt) {
   }
   mesh.rotation.y = P.heading;
 
-  // interact prompt
+  // interact prompt — Round 11: a nearby job board outranks the car prompt
+  // only in wording; E still enters the car, J takes the job.
   promptCar = nearestStealable();
-  if (SH.HUD) SH.HUD.setPrompt(promptCar ? 'E — Enter ' + (promptCar.type === 'taxi' ? 'Taxi' : 'Vehicle') : null);
+  var prompt = promptCar ? 'E — Enter ' + (promptCar.type === 'taxi' ? 'Taxi' : 'Vehicle') : null;
+  if (SH.Jobs && SH.Jobs.nearBoard) {
+    var nb = SH.Jobs.nearBoard();
+    if (nb) prompt = (prompt ? prompt + '   ·   ' : '') + 'J — Take a job (' + nb.label + ')';
+  }
+  if (SH.HUD) SH.HUD.setPrompt(prompt);
   if (SH.KeysPressed['KeyE'] && promptCar) enterCar(promptCar);
   if (SH.KeysPressed['KeyF']) shoot();
 
   // camera: smooth chase behind the hero
   var dist = 6.4;
-  var cx = P.pos.x - Math.sin(camYaw) * Math.cos(camPitch) * dist * -1;
-  var cz = P.pos.z - Math.cos(camYaw) * Math.cos(camPitch) * dist * -1;
-  // (camYaw points from hero toward camera-back; forward is -sin/-cos)
-  cx = P.pos.x + Math.sin(camYaw) * Math.cos(camPitch) * dist;
-  cz = P.pos.z + Math.cos(camYaw) * Math.cos(camPitch) * dist;
+  var cx = P.pos.x + Math.sin(camYaw) * Math.cos(camPitch) * dist;
+  var cz = P.pos.z + Math.cos(camYaw) * Math.cos(camPitch) * dist;
   var cy = P.pos.y + 1.7 + Math.sin(camPitch) * dist;
   var cam = SH.camera;
   cam.position.x = U.lerp(cam.position.x, cx, Math.min(1, dt * 7));
   cam.position.y = U.lerp(cam.position.y, cy, Math.min(1, dt * 7));
   cam.position.z = U.lerp(cam.position.z, cz, Math.min(1, dt * 7));
   cam.lookAt(P.pos.x, P.pos.y + 1.55, P.pos.z);
+  applyShake(dt);
 }
 
 function updateDriving(dt) {
@@ -251,7 +281,8 @@ function updateDriving(dt) {
   if (SH.HUD) SH.HUD.setPrompt(Math.abs(car.speed) < 1.2 ? 'E — Exit vehicle' : null);
   if (SH.KeysPressed['KeyE'] && Math.abs(car.speed) < 2.5) exitCar();
 
-  SH.Audio.setEngine(U.clamp(Math.abs(car.speed) / car.maxSpeed, 0.08, 1));
+  // Round 11: forward road speed too, for the audio hum layer
+  SH.Audio.setEngine(U.clamp(Math.abs(car.speed) / car.maxSpeed, 0.08, 1), Math.abs(car.speed) * 3.6);
 
   // camera chases the car's tail, widening with speed
   var back = 8.6 + Math.abs(car.speed) * 0.22;
@@ -269,12 +300,16 @@ function updateDriving(dt) {
     car.mesh.position.z + U.fwdZ(car.heading) * 6
   );
   camYaw = car.heading + Math.PI;
+  applyShake(dt);
 }
 
 P.damage = function (amount, cause) {
   if (!P.alive || amount <= 0) return;
   P.health -= amount;
   lastDamageT = SH.G.time;
+  // Round 11 feedback: flash + shake, scaled so chip damage stays subtle
+  if (SH.HUD && SH.HUD.hurtFlash) SH.HUD.hurtFlash(U.clamp(amount / 26, 0.25, 1));
+  addShake(U.clamp(amount * 0.016, 0.06, 0.4));
   if (P.health <= 0) {
     P.health = 0;
     P.alive = false;
@@ -285,6 +320,7 @@ P.damage = function (amount, cause) {
 P.onCarCrash = function (strength) {
   // hard hits in a car rattle the driver a little
   if (strength > 9) P.damage((strength - 9) * 0.55, 'crash');
+  else if (strength > 5.5) addShake(0.12); // a thump you feel but don't pay for
   if (P.car && P.car.damage > 92) P.damage(1.2, 'wreck');
 };
 
@@ -297,6 +333,7 @@ P.respawn = function (x, z) {
   if (P.inCar) { P.car.mode = 'off'; P.car.isPlayerCar = false; P.inCar = false; P.car = null; }
   mesh.visible = true;
   P.pos.set(x, 0, z);
+  shakeAmp = 0;
   P.heal();
 };
 

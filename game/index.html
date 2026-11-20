@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Solstice Heat</title>
+<title>Solstice Heat — Round 11: Economy & Jobs</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; overflow: hidden; background: #0b1026; }
@@ -16,9 +16,13 @@
   #hud.live { opacity: 1; }
   .hud-box { background: rgba(8, 12, 24, .55); border: 1px solid rgba(255,255,255,.14); border-radius: 10px; backdrop-filter: blur(2px); }
 
-  #hud-top-left { position: absolute; top: 14px; left: 14px; padding: 10px 14px; min-width: 168px; }
+  #hud-top-left { position: absolute; top: 14px; left: 14px; padding: 10px 14px; min-width: 190px; }
   #hud-money { font-size: 26px; font-weight: 800; color: #7be495; letter-spacing: .5px; text-shadow: 0 2px 6px rgba(0,0,0,.6); }
-  #hud-stars { font-size: 21px; color: #ffd94d; letter-spacing: 3px; min-height: 24px; text-shadow: 0 0 8px rgba(255,180,0,.0); }
+  #hud-bank { font-size: 12.5px; color: #a8cdea; margin-top: 1px; }
+  #hud-level-name { font-size: 12.5px; font-weight: 700; color: #ffd94d; margin-top: 5px; letter-spacing: .4px; }
+  #hud-xp-wrap { margin-top: 4px; height: 6px; background: rgba(255,255,255,.15); border-radius: 3px; overflow: hidden; }
+  #hud-xp-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #ffb347, #ff5e8a); transition: width .3s; }
+  #hud-stars { font-size: 21px; color: #ffd94d; letter-spacing: 3px; min-height: 24px; text-shadow: 0 0 8px rgba(255,180,0,.0); margin-top: 4px; }
   #hud-stars.hot { text-shadow: 0 0 10px rgba(255,120,40,.85); }
   #hud-stars.rising { animation: starblink .5s steps(2) infinite; }
   @keyframes starblink { 50% { opacity: .35; } }
@@ -35,10 +39,30 @@
   #hud-timer.urgent { color: #ff5e5e; animation: starblink .4s steps(2) infinite; }
   #hud-taxi { display: none; }
 
-  #hud-top-right { position: absolute; top: 14px; right: 14px; text-align: right; }
+  /* wanted escalation banner */
+  #esc-banner { position: absolute; top: 86px; left: 50%; transform: translateX(-50%) scale(.8); text-align: center; opacity: 0; transition: opacity .18s, transform .18s; }
+  #esc-banner.show { opacity: 1; transform: translateX(-50%) scale(1); }
+  #esc-stars { font-size: 34px; color: #ffd94d; letter-spacing: 6px; text-shadow: 0 0 18px rgba(255,120,40,.9), 0 2px 8px rgba(0,0,0,.8); }
+  #esc-banner small { display: block; font-size: 11px; letter-spacing: 3px; color: #ff9d8a; margin-top: 2px; }
+
+  #hud-top-right { position: absolute; top: 14px; right: 14px; text-align: right; max-width: 330px; }
   #radio-ticker { display: inline-block; padding: 7px 12px; font-size: 12.5px; color: #ffd9ec; letter-spacing: .4px; }
+  #hud-chatter { margin-top: 6px; padding: 6px 10px; font-size: 12px; color: #bfe3ff; opacity: 0; transition: opacity .4s; text-align: left; }
+  #hud-chatter.show { opacity: 1; }
   #hud-district { margin-top: 6px; font-size: 11.5px; color: rgba(255,255,255,.75); text-shadow: 0 1px 4px rgba(0,0,0,.8); padding-right: 4px; }
   #mute-note { font-size: 11px; color: #ffb3ab; margin-top: 4px; padding-right: 4px; }
+
+  /* side-job board */
+  #hud-jobboard { position: absolute; right: 14px; top: 128px; padding: 9px 13px; max-width: 300px; border-left: 4px solid #51e88a; }
+  #hud-jobboard .job-title { font-size: 11px; letter-spacing: 2px; color: #51e88a; font-weight: 800; margin-bottom: 3px; }
+  #hud-job-lines { font-size: 12.5px; line-height: 1.5; color: #eafff1; }
+
+  /* reward summary panel */
+  #hud-reward { position: absolute; right: 14px; top: 240px; width: 272px; padding: 12px 15px; opacity: 0; transform: translateX(16px); transition: opacity .3s, transform .3s; border-left: 4px solid #ffd94d; }
+  #hud-reward.show { opacity: 1; transform: translateX(0); }
+  #hud-reward-title { font-size: 13.5px; font-weight: 800; color: #ffd94d; margin-bottom: 7px; letter-spacing: .3px; }
+  .reward-row { display: flex; justify-content: space-between; font-size: 12.5px; padding: 2.5px 0; color: rgba(255,255,255,.88); }
+  .reward-row .reward-val { font-weight: 700; color: #7be495; }
 
   #hud-bottom-left { position: absolute; left: 14px; bottom: 14px; }
   #minimap { display: block; border-radius: 10px; border: 1px solid rgba(255,255,255,.25); box-shadow: 0 4px 18px rgba(0,0,0,.45); }
@@ -52,6 +76,23 @@
 
   #prompt { position: absolute; left: 50%; bottom: 118px; transform: translateX(-50%); padding: 8px 16px; font-size: 14.5px; font-weight: 600; color: #d9fbff; opacity: 0; transition: opacity .15s; }
   #prompt.show { opacity: 1; }
+
+  /* guided tutorial hint */
+  #hud-tutorial { position: absolute; left: 50%; bottom: 158px; transform: translateX(-50%); padding: 8px 16px; font-size: 13.5px; font-weight: 600; color: #ffe9b0; border-left: 4px solid #ffd94d; display: none; white-space: nowrap; }
+
+  /* pedestrian bark */
+  #hud-bark { position: absolute; left: 50%; bottom: 84px; transform: translateX(-50%); font-size: 13.5px; font-style: italic; color: #fff; text-shadow: 0 2px 6px rgba(0,0,0,.9); opacity: 0; transition: opacity .3s; }
+  #hud-bark.show { opacity: 1; }
+
+  /* floating score popup */
+  #score-popup { position: absolute; left: 50%; top: 38%; transform: translateX(-50%); font-size: 21px; font-weight: 800; color: #7be495; letter-spacing: 1px; text-shadow: 0 2px 10px rgba(0,0,0,.8); opacity: 0; }
+  #score-popup.pop { animation: popupfloat 1.25s ease-out forwards; }
+  @keyframes popupfloat { 0% { opacity: 0; transform: translateX(-50%) translateY(10px); } 18% { opacity: 1; } 100% { opacity: 0; transform: translateX(-50%) translateY(-34px); } }
+
+  /* hurt flash vignette */
+  #hurt-flash { position: fixed; inset: 0; pointer-events: none; z-index: 6; opacity: 0;
+    background: radial-gradient(ellipse at center, rgba(255,0,0,0) 55%, rgba(255,30,20,.55) 100%); transition: opacity .45s; }
+  #hurt-flash.on { transition: opacity .05s; }
 
   #center-msg { position: absolute; top: 30%; left: 50%; transform: translate(-50%, -50%) scale(.96); text-align: center; opacity: 0; transition: opacity .25s, transform .25s; pointer-events: none; }
   #center-msg.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
@@ -77,6 +118,7 @@
   .tbtn.primary { background: #ff5e8a; border-color: #ff5e8a; }
   .tbtn.primary:hover { background: #ff7ba3; }
   #save-info { margin-top: 14px; font-size: 13.5px; color: #ffe9b0; min-height: 18px; }
+  #title-save-line { margin-top: 4px; font-size: 13px; color: #7be495; min-height: 17px; }
   .controls { margin-top: 30px; font-size: 13px; line-height: 1.9; color: rgba(255,255,255,.85); text-shadow: 0 1px 5px rgba(0,0,0,.9); }
   .controls b { color: #ffd94d; }
 
@@ -89,6 +131,13 @@
   #pause-screen h2 { font-size: 44px; letter-spacing: 6px; }
   #pause-screen p { margin-top: 8px; color: rgba(255,255,255,.85); }
 
+  /* help overlay */
+  #help-overlay { background: rgba(5, 8, 20, .82); z-index: 20; }
+  #help-overlay h2 { font-size: 34px; letter-spacing: 4px; color: #ffd94d; }
+  #help-overlay .help-cols { display: flex; gap: 44px; margin-top: 22px; text-align: left; font-size: 14px; line-height: 2; color: rgba(255,255,255,.9); }
+  #help-overlay b { color: #ffd94d; }
+  #help-overlay .help-note { margin-top: 18px; font-size: 13px; color: #a8cdea; max-width: 560px; line-height: 1.6; }
+
   /* big title burned into the cover screenshot */
   #shot-title { display: none; position: fixed; left: 0; right: 0; bottom: 7%; text-align: center; z-index: 8; pointer-events: none; }
   #shot-title .game-title { font-size: 96px; }
@@ -96,7 +145,9 @@
 
   /* cover shot: minimal HUD */
   body.shot-cover #hud-bottom-left, body.shot-cover #hud-objective,
-  body.shot-cover #hud-top-right, body.shot-cover #toast { display: none; }
+  body.shot-cover #hud-top-right, body.shot-cover #hud-jobboard,
+  body.shot-cover #hud-reward, body.shot-cover #hud-tutorial,
+  body.shot-cover #toast { display: none; }
   body.shotmode #title-screen { display: none; }
 
   #boot-ok, #boot-err { position: fixed; left: -9999px; top: -9999px; width: 1px; height: 1px; overflow: hidden; }
@@ -104,11 +155,15 @@
 </head>
 <body>
 <div id="game-root"></div>
+<div id="hurt-flash"></div>
 
 <!-- ======================= HUD ======================= -->
 <div id="hud">
   <div id="hud-top-left" class="hud-box">
     <div id="hud-money">$0</div>
+    <div id="hud-bank">Bank $0</div>
+    <div id="hud-level-name">Street Rat</div>
+    <div id="hud-xp-wrap"><div id="hud-xp-fill"></div></div>
     <div id="hud-stars"></div>
     <div id="hud-eye"></div>
     <div id="bust-wrap"><div id="bust-fill"></div></div>
@@ -120,10 +175,23 @@
   </div>
   <div id="hud-taxi"></div>
 
+  <div id="esc-banner"><div id="esc-stars"></div><small>WANTED LEVEL RISING</small></div>
+
   <div id="hud-top-right">
     <span id="radio-ticker" class="hud-box"></span>
+    <div id="hud-chatter" class="hud-box"></div>
     <div id="hud-district"></div>
     <div id="mute-note"></div>
+  </div>
+
+  <div id="hud-jobboard" class="hud-box" style="display:none">
+    <div class="job-title">SIDE JOBS</div>
+    <div id="hud-job-lines"></div>
+  </div>
+
+  <div id="hud-reward" class="hud-box">
+    <div id="hud-reward-title"></div>
+    <div id="hud-reward-rows"></div>
   </div>
 
   <div id="hud-bottom-left">
@@ -133,7 +201,10 @@
 
   <div id="hud-speed-wrap" style="display:none"><span id="hud-speed">0</span> <small>KM/H</small></div>
 
+  <div id="hud-tutorial" class="hud-box"></div>
   <div id="prompt" class="hud-box"></div>
+  <div id="hud-bark"></div>
+  <div id="score-popup"></div>
   <div id="center-msg"><div id="center-title"></div><div id="center-sub"></div></div>
   <div id="toast" class="hud-box"><span id="toast-text"></span></div>
 </div>
@@ -145,13 +216,42 @@
   <div class="title-btns">
     <button id="btn-new" class="tbtn primary">NEW GAME</button>
     <button id="btn-continue" class="tbtn">CONTINUE</button>
+    <button id="btn-help" class="tbtn">HOW TO PLAY</button>
   </div>
   <div id="save-info"></div>
+  <div id="title-save-line"></div>
   <div class="controls">
     <b>WASD</b> move / drive &nbsp;·&nbsp; <b>E</b> enter / steal car &nbsp;·&nbsp; <b>F</b> shoot (on foot)<br>
-    <b>Shift</b> sprint &nbsp;·&nbsp; <b>Space</b> jump &nbsp;·&nbsp; <b>T</b> taxi job (in a car) &nbsp;·&nbsp; <b>Arrows</b> camera<br>
-    <b>P / Esc</b> pause &nbsp;·&nbsp; <b>M</b> mute &nbsp;·&nbsp; <b>Enter</b> start
+    <b>Shift</b> sprint &nbsp;·&nbsp; <b>Space</b> jump &nbsp;·&nbsp; <b>T</b> taxi job (in a car) &nbsp;·&nbsp; <b>J</b> side job (at a green board)<br>
+    <b>Arrows</b> camera &nbsp;·&nbsp; <b>P / Esc</b> pause &nbsp;·&nbsp; <b>M</b> mute &nbsp;·&nbsp; <b>Enter</b> start
   </div>
+</div>
+
+<!-- ======================= HELP ======================= -->
+<div id="help-overlay" class="screen">
+  <h2>HOW TO PLAY</h2>
+  <div class="help-cols">
+    <div>
+      <b>WASD</b> — move / drive<br>
+      <b>E</b> — enter / exit / steal a car<br>
+      <b>F</b> — shoot (on foot)<br>
+      <b>Shift</b> — sprint · <b>Space</b> — jump<br>
+      <b>Arrow keys</b> — camera orbit / pitch
+    </div>
+    <div>
+      <b>T</b> — taxi fare (while driving, after Marisol's 2nd job)<br>
+      <b>J</b> — take / abandon a side job at a green job board<br>
+      <b>P / Esc</b> — pause · <b>M</b> — mute<br>
+      <b>R</b> — get up after WASTED / BUSTED<br>
+      <b>Backspace</b> — skip the guided tour
+    </div>
+  </div>
+  <p class="help-note">Work Marisol's eight-mission chain, run taxi fares, and hit the glowing green
+  job boards for courier runs, checkpoint rushes and VIP rides. Every payout earns reputation XP —
+  climb from Street Rat to Solstice Legend for bigger money, with 15% of everything banked
+  automatically. Consecutive jobs build a streak bonus. Thread past traffic at speed for near-miss
+  bonuses, and break the SBPD's line of sight to cool your stars.</p>
+  <div class="title-btns"><button id="help-close" class="tbtn primary">BACK</button></div>
 </div>
 
 <!-- ======================= WASTED / BUSTED ======================= -->
@@ -187,11 +287,13 @@
 <script src="src/config.js"></script>
 <script src="src/rng.js"></script>
 <script src="src/audio.js"></script>
+<script src="src/economy.js"></script>
 <script src="src/city.js"></script>
 <script src="src/vehicles.js"></script>
 <script src="src/people.js"></script>
 <script src="src/player.js"></script>
 <script src="src/police.js"></script>
+<script src="src/jobs.js"></script>
 <script src="src/missions.js"></script>
 <script src="src/hud.js"></script>
 <script src="src/shots.js"></script>

@@ -5,6 +5,9 @@
 // camera) so the four marketing shots are composed, not lucky. Input is
 // locked, the day cycle is pinned to golden hour, and after main.js renders
 // enough frames it freezes the scene and sets window.__shotReady = true.
+// Round 11: the stills now show off the economy face — a mid-run bankroll
+// with banked savings, a Fixer reputation with a part-filled XP bar, the
+// side-job board, and (in the chase) an SBPD radio line under the ticker.
 // ============================================================================
 (function () {
 'use strict';
@@ -46,6 +49,20 @@ function putPlayerInCar(car, speed) {
   SH.Player.heading = car.heading;
 }
 
+// Round 11: dress the HUD's economy layer the way a real mid-run save
+// would — Fixer reputation, money in the bank, jobs on the board.
+function dressEconomy(jobLines) {
+  SH.G.money = 2450; // a mid-run bankroll reads better than $0
+  if (SH.Economy) {
+    SH.Economy.restore({
+      bank: 640, xp: 1350,
+      stats: { distanceKm: 18.4, jobsDone: 7, jobsTaken: 8, faresDone: 3,
+               missionsDone: 4, topSpeedKmh: 96, nearMisses: 5, earnedTotal: 3900 }
+    });
+  }
+  if (SH.HUD && SH.HUD.setJobBoard) SH.HUD.setJobBoard(jobLines || []);
+}
+
 var setups = {
   // Low cinematic camera on the beach road: hero convertible angled at the
   // lens, neon blocks and palms behind it, low sun over the rooftops.
@@ -66,7 +83,8 @@ var setups = {
     if (st) st.style.display = 'block';
   },
 
-  // Behind the wheel downtown: traffic ahead, full HUD, minimap live.
+  // Behind the wheel downtown: traffic ahead, full HUD with the economy
+  // panel and a live courier job on the board, minimap live.
   drive: function () {
     clearArea(-16, -26, 36);
     heroCar = SH.Vehicles.spawn({
@@ -78,6 +96,7 @@ var setups = {
     SH.Vehicles.spawn({ type: 'convertible', color: 0x27ae60, x: 2, z: -32.4, heading: -Math.PI / 2, mode: 'parked' });
     SH.People.spawn(-20, -20.5);
     SH.People.spawn(22, -35);
+    dressEconomy(['◈ Courier Run — deliver to Solstice Motors', 'Streak ×1.24 (2 in a row)']);
     if (SH.HUD) {
       SH.HUD.setObjective('Deliver the sedan to Solstice Motors', 132);
       SH.HUD.setTimer(96);
@@ -86,7 +105,8 @@ var setups = {
     camLook.set(-34 + 8, 1.2, -25.6);
   },
 
-  // Three stars, two interceptors on the tail, lightbars lit.
+  // Three stars, two interceptors on the tail, lightbars lit, dispatch
+  // chatter on the radio line.
   chase: function () {
     clearArea(56, 54, 32);
     heroCar = SH.Vehicles.spawn({
@@ -106,12 +126,17 @@ var setups = {
         p.lightbar.blue.color.setHex(0x2266ff);
       }
     });
-    if (SH.HUD) SH.HUD.setObjective('Lose the police completely', -1);
+    dressEconomy(['◈ Checkpoint Rush — gate 2/4', 'Streak ×1.12 (1 in a row)']);
+    if (SH.HUD) {
+      SH.HUD.setObjective('Lose the police completely', -1);
+      if (SH.HUD.setRadioChatter) SH.HUD.setRadioChatter('Dispatch: all units, suspect is actively evading.');
+    }
     camPos.set(49.5, 3.6, 24);
     camLook.set(56, 1.2, 60);
   },
 
-  // On foot on the promenade: peds strolling, mission pillar ahead, sea right.
+  // On foot on the promenade: peds strolling, mission pillar ahead, the
+  // marina job board in reach and its hint on the job board, sea right.
   foot: function () {
     clearArea(192, 14, 22);
     parkPlayerAt(191, 20, 2.72);
@@ -120,7 +145,9 @@ var setups = {
     SH.People.spawn(189, 28);
     SH.People.spawn(196, 26);
     SH.People.spawn(186.5, 2);
+    dressEconomy(['J — take a job at Marina Job Board', 'Jobs done: 7 · streak ×1.24']);
     if (SH.Missions) SH.Missions.begin(); // mission 1: marina pillar at (200, 0)
+    if (SH.HUD && SH.HUD.setBark) SH.HUD.setBark('“Heard the job boards pay better if you behave.”');
     camPos.set(191 - U.fwdX(2.72) * 7, 2.9, 20 - U.fwdZ(2.72) * 7);
     camLook.set(197, 1.4, 4);
   }
@@ -132,7 +159,7 @@ SH.Shots = {
   setup: function () {
     if (!this.active()) return;
     document.body.classList.add('shotmode');
-    SH.G.money = 2450; // a mid-run bankroll reads better than $0
+    if (shotName === 'cover') SH.G.money = 2450;
     setups[shotName]();
   },
   // Per-frame in shot mode: hold the composed camera (tiny push-in on cover).

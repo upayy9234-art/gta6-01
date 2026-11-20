@@ -5,6 +5,10 @@
 // hard they hunt. Police steer a pursuit solution at the player, ram when
 // close, and arrest on foot when they can hold the player in reach. Hiding
 // (breaking line of sight) bleeds heat away again.
+// Round 11: the SBPD talks. Star escalations raise a HUD banner, and a
+// throttled radio-chatter feed (lines per wanted tier, from config) keeps
+// the hunt audible on screen — plus the siren now fades by true distance
+// through audio.js's smoothed level.
 // ============================================================================
 (function () {
 'use strict';
@@ -21,6 +25,8 @@ var seenNow = false;
 var bustProgress = 0;
 var spawnTimer = 0;
 var blinkT = 0;
+var lastStars = 0;         // Round 11: escalation detection
+var chatterTimer = 6;      // Round 11: seconds to the next radio line
 
 var HEAT_FOR_STAR = [0, 12, 32, 62, 102, 148];
 var CRIME_HEAT = {
@@ -32,6 +38,13 @@ function stars() {
   var s = 0;
   for (var i = 1; i <= 5; i++) if (heat >= HEAT_FOR_STAR[i]) s = i;
   return s;
+}
+
+// Round 11: pick a chatter line for the current tier and push it to the HUD.
+function chatter(s) {
+  if (!SH.HUD || !SH.HUD.setRadioChatter) return;
+  var pool = s <= 1 ? C.policeChatter.low : (s <= 3 ? C.policeChatter.mid : C.policeChatter.high);
+  SH.HUD.setRadioChatter(SH.rng.pick(pool));
 }
 
 function makeLightbar(car) {
@@ -143,6 +156,7 @@ SH.Police = {
   clearWanted: function () {
     heat = 0;
     bustProgress = 0;
+    lastStars = 0;
   },
 
   // Force-spawn n interceptors near the player (mission 5/6 and shots).
@@ -165,6 +179,22 @@ SH.Police = {
     var pcs = policeCars();
     var pp = SH.Player.pos;
     blinkT += dt;
+
+    // Round 11: escalation banner + an immediate radio line on star-up;
+    // ambient chatter while the hunt is live, spaced so it never spams.
+    if (s > lastStars) {
+      if (SH.HUD && SH.HUD.escalationBanner) SH.HUD.escalationBanner(s);
+      chatter(s);
+      chatterTimer = SH.rng.range(9, 14);
+    }
+    lastStars = s;
+    if (s > 0) {
+      chatterTimer -= dt;
+      if (chatterTimer <= 0) {
+        chatter(s);
+        chatterTimer = SH.rng.range(10, 16);
+      }
+    }
 
     // --- line of sight: any cop within 48m with a clear-ish view "sees" you
     seenNow = false;

@@ -3,6 +3,9 @@
 // Central data + tuning for the whole game. Every other module reads its
 // constants from here so the city layout, the mission chain, the radio
 // playlist and the physics tuning all live in exactly one place.
+// Round 11 adds: the reputation ladder + economy tuning, the side-job
+// economy (courier / checkpoint race / VIP runs), police radio chatter
+// lines, pedestrian barks and the billboard copy for the new city props.
 // ============================================================================
 (function () {
 'use strict';
@@ -79,6 +82,17 @@ SH.Config = {
     [4, 4, 'TIDEWATER INN', '#7dd3fc']
   ],
 
+  // Round 11: rooftop + roadside billboard copy [col, row, headline, colour].
+  // city.js mounts these on existing blocks — flat planes, no new draw
+  // call storms (one shared geometry, one canvas texture each).
+  billboards: [
+    [1, 1, 'SOLSTICE COLA — TASTE THE SUNSET', '#ff5e8a'],
+    [3, 2, 'PALMS CASINO · JACKPOT NIGHTS', '#ffd94d'],
+    [5, 3, 'MARINA AZUL BOAT RENTALS', '#5ee8d2'],
+    [0, 4, 'CAFE BRISA · OPEN TIL DAWN', '#a3e635'],
+    [4, 0, 'GILDED PALM — STAY GOLDEN', '#ffd700']
+  ],
+
   // Named places missions and taxi jobs point at. Coordinates sit on the
   // sidewalk ring of the matching block (or on the promenade for the marina)
   // so both the player on foot and a car can always reach them.
@@ -111,11 +125,93 @@ SH.Config = {
     playerHealth: 100,
     dayLength: 420,        // seconds for a full sun cycle (slow, golden-anchored)
     dayStart: 0.44,        // start in warm late afternoon, sliding into golden hour
-    shotSeed: 7
+    shotSeed: 7,
+    driftSmokeMax: 90,     // hard cap on live drift-smoke sprites (FPS guard)
+    nearMissDist: 3.1,     // metres: closer than this at speed = near miss
+    nearMissSpeed: 11,     // m/s minimum speed for a near miss to count
+    nearMissCooldown: 1.6  // seconds between near-miss bonuses per car pair run
+  },
+
+  // --- Reputation + economy (Round 11, economy.js) -------------------------
+  // Five rungs from Street Rat to Solstice Legend. XP comes from missions,
+  // side jobs and taxi fares; each rung raises every payout by payoutBonus
+  // per level and unlocks bragging rights on the title screen.
+  economy: {
+    levels: [
+      { name: 'Street Rat',      xp: 0 },
+      { name: 'Runner',          xp: 400 },
+      { name: 'Fixer',           xp: 1200 },
+      { name: 'Kingpin',         xp: 2800 },
+      { name: 'Solstice Legend', xp: 5500 }
+    ],
+    payoutBonusPerLevel: 0.08,  // +8% cash per reputation level
+    bankShare: 0.15,            // 15% of every payout is banked automatically
+    xpPerMission: 220,
+    xpPerJob: 90,
+    xpPerFare: 45,
+    xpPerNearMiss: 2
+  },
+
+  // --- Side jobs (Round 11, jobs.js) ---------------------------------------
+  // Repeatable work picked up at glowing job boards scattered over the bay.
+  // Payouts scale with distance, reputation level and the current streak.
+  jobs: {
+    pickupPoints: [
+      { x: -145, z: -97, label: 'Portside Job Board' },
+      { x: -30,  z: -50, label: 'Downtown Job Board' },
+      { x: 87,   z: 39,  label: 'Casino Job Board' },
+      { x: 30,   z: 138, label: 'Tidewater Job Board' },
+      { x: 168,  z: 138, label: 'Depot Job Board' },
+      { x: 196,  z: -58, label: 'Marina Job Board' }
+    ],
+    types: {
+      courier: { label: 'Courier Run',   base: 60,  perMeter: 0.55, timePerMeter: 0.42, timeBase: 35 },
+      race:    { label: 'Checkpoint Rush', base: 80, perMeter: 0.35, timePerMeter: 0.30, timeBase: 22 },
+      vip:     { label: 'VIP Ride',      base: 95,  perMeter: 0.75, timePerMeter: 0.55, timeBase: 45 }
+    },
+    streakBonus: 0.12,       // +12% per consecutive completed job (cap +60%)
+    streakCap: 5,
+    raceCheckpoints: 3,      // gates per checkpoint-rush job
+    pickupRadius: 9          // metres: press J inside this ring to take a job
+  },
+
+  // SBPD radio chatter (police.js): ambient lines per wanted tier.
+  policeChatter: {
+    low: [
+      'Dispatch: unit responding to a disturbance in the bay.',
+      'Dispatch: keep eyes open, suspect vehicle in the area.',
+      'Unit 4: rolling through downtown, nothing yet.'
+    ],
+    mid: [
+      'Dispatch: all units, suspect is actively evading.',
+      'Unit 2: I have eyes on the suspect — moving to intercept.',
+      'Dispatch: road spikes are NOT authorised. Repeat, not authorised.'
+    ],
+    high: [
+      'Dispatch: ALL UNITS — suspect is a bay-wide priority.',
+      'Unit 7: he is not stopping. Repeat, he is NOT stopping.',
+      'Dispatch: contain the suspect. The bay is watching.'
+    ]
+  },
+
+  // Pedestrian barks (people.js): overheard flavour lines.
+  barks: {
+    calm: [
+      'Nice night for it.', 'Golden hour never misses.', 'You smell that salt air?',
+      'Marina party tonight, you going?', 'Best tacos on Calle Ocho, fight me.'
+    ],
+    job: [
+      'Heard the job boards pay better if you behave.', 'Courier work? Fast money, friend.',
+      'My cousin does VIP runs. Says the tips are unreal.'
+    ],
+    wanted: [
+      'Whoa — SBPD is really after that one!', 'Get out of the road!',
+      'Somebody call the police! …oh. They are here.', 'I saw nothing. NOTHING.'
+    ]
   },
 
   // --- Story chain ---------------------------------------------------------
-  // type: goto | deliver | chase | collect | escape | finale
+  // type: goto | deliver | chase | collect | escape | finale | jobs | crown
   missions: [
     {
       id: 'errand', title: 'First Errand', type: 'goto', payout: 250,
@@ -176,6 +272,26 @@ SH.Config = {
       ],
       objective: 'Take the case from Banco Solstice',
       target: 'bank'
+    },
+    {
+      id: 'nightledger', title: 'Night Ledger', type: 'jobs', payout: 1800, jobsNeeded: 2,
+      from: 'Marisol Vega',
+      intro: [
+        'Marisol: New books, partner. The bay runs on side work now — couriers, checkpoints, VIPs.',
+        'Marisol: Work the job boards. Finish two jobs, any two, and the ledger opens for you.'
+      ],
+      objective: 'Complete side jobs (0/2) — press J at a job board',
+      target: null
+    },
+    {
+      id: 'crown', title: 'Solstice Crown', type: 'crown', payout: 5000, time: 240,
+      from: 'Marisol Vega',
+      intro: [
+        'Marisol: One last crown to lift. The Gilded Palm keeps a jeweled case in its lobby.',
+        'Marisol: Take it, outrun five stars AND the clock, and set it down at Marina Pier. Legend stuff.'
+      ],
+      objective: 'Take the crown case from The Gilded Palm',
+      target: 'gilded'
     }
   ],
 
@@ -194,6 +310,7 @@ SH.Config = {
     ] }
   ],
 
-  taxiNames: ['Rosa', 'Tito', 'Ana', 'Marco', 'Lena', 'Yusuf', 'Priya', 'Diego', 'Mina', 'Omar']
+  taxiNames: ['Rosa', 'Tito', 'Ana', 'Marco', 'Lena', 'Yusuf', 'Priya', 'Diego', 'Mina', 'Omar'],
+  vipNames: ['Senator Voss', 'DJ Marlin', 'Chef Aurelia', 'Countess Rey', 'Captain Ilya', 'Madame Noor']
 };
 })();

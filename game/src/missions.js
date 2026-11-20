@@ -1,10 +1,16 @@
 // ============================================================================
 // SOLSTICE HEAT — missions.js
-// Marisol Vega's six-mission story chain plus the repeatable taxi side job.
-// A glowing light-pillar marker shows the current objective; each mission is
-// a small state machine (goto / deliver / chase / collect / escape / finale)
-// checked every frame against the player's position, car and wanted level.
-// Progress (mission index, money, taxi unlock) is saved by main.js.
+// Marisol Vega's story chain plus the repeatable taxi side job. A glowing
+// light-pillar marker shows the current objective; each mission is a small
+// state machine (goto / deliver / chase / collect / escape / finale, and
+// Round 11's jobs + crown) checked every frame against the player's
+// position, car and wanted level. Progress (mission index, money, taxi
+// unlock) is saved by main.js.
+// Round 11: the chain grows to eight missions — Night Ledger sends the
+// player out to work the new side-job boards, and Solstice Crown is a
+// five-star, against-the-clock finale at The Gilded Palm. Every payout now
+// flows through economy.js (reputation bonus + automatic banking) and ends
+// with an itemised reward summary on the HUD.
 // ============================================================================
 (function () {
 'use strict';
@@ -26,6 +32,7 @@ var state = {
   targetCar: null,
   targetHits: 0,
   deliverCar: null,
+  jobsBase: 0,             // Round 11: Economy jobsDone when Night Ledger began
   taxiUnlocked: false,
   storyDone: false,
   taxi: null               // {stage, ped, destName, dest, startT, startPos}
@@ -120,6 +127,28 @@ function startMission(i) {
     var b = locOf('bank');
     setMarker(b.x, b.z, 0xffd94d);
     state.phase = 'pickup';
+  } else if (def.type === 'jobs') {
+    // Round 11: snapshot the lifetime job count; the mission completes
+    // when jobsNeeded fresh completions land on top of it.
+    state.jobsBase = SH.Economy ? SH.Economy.stats.jobsDone : 0;
+    hideMarker();
+    m.objective = 'Complete side jobs (0/' + def.jobsNeeded + ') — press J at a job board';
+    // point the player at the closest board so the new system is findable
+    if (SH.Jobs && SH.Jobs.boardPositions) {
+      var boards = SH.Jobs.boardPositions();
+      var bp2 = SH.Player.pos, bestB = null, bestBD = 1e18;
+      for (var bi = 0; bi < boards.length; bi++) {
+        var bd2 = U.dist2(bp2.x, bp2.z, boards[bi].x, boards[bi].z);
+        if (bd2 < bestBD) { bestBD = bd2; bestB = boards[bi]; }
+      }
+      if (bestB) setTimeout(function () {
+        if (SH.HUD) SH.HUD.toastQueue(['Marisol: Nearest board: ' + bestB.label + ' — green square on your minimap. Go earn.']);
+      }, 5200);
+    }
+  } else if (def.type === 'crown') {
+    var g = locOf('gilded');
+    setMarker(g.x, g.z, 0xffd94d);
+    state.phase = 'pickup';
   }
   refreshObjective();
 }
@@ -129,7 +158,7 @@ function refreshObjective() {
   var m = state.active;
   if (!m) {
     SH.HUD.setObjective(state.storyDone
-      ? 'Free roam — press T in a car for taxi work'
+      ? 'Free roam — T for taxi work, J at a green board for side jobs'
       : '', -1);
     return;
   }
@@ -142,12 +171,29 @@ function refreshObjective() {
 function completeMission() {
   var m = state.active;
   if (!m) return;
-  SH.G.money += m.payout;
+  // Round 11: one payout pipeline for story money — reputation bonus and
+  // the automatic bank split included, then an itemised summary panel.
+  var res = SH.Economy
+    ? SH.Economy.pay(m.payout, { xp: C.economy.xpPerMission, why: 'mission' })
+    : { cash: m.payout, banked: 0, bonus: 0, total: m.payout };
+  if (SH.Economy) SH.Economy.countMission();
   SH.Audio.complete();
   SH.Audio.cash();
   if (SH.HUD) {
-    SH.HUD.message('MISSION COMPLETE', m.def.title + '  ·  +' + U.fmtMoney(m.payout), 3200);
-    SH.HUD.toastQueue([m.def.from + ': Clean work. ' + U.fmtMoney(m.payout) + ' wired. Stay shiny, partner.']);
+    SH.HUD.message('MISSION COMPLETE', m.def.title + '  ·  +' + U.fmtMoney(res.cash), 3200);
+    if (SH.HUD.showReward) {
+      var rows = [
+        ['Mission payout', U.fmtMoney(m.payout)],
+        ['Reputation bonus', '+' + U.fmtMoney(res.bonus)],
+        ['Banked (15%)', U.fmtMoney(res.banked)],
+        ['Cash in hand', U.fmtMoney(res.cash)]
+      ];
+      var nextDef = C.missions[state.index + 1];
+      rows.push(['Next up', nextDef ? nextDef.title : 'The bay is yours — free roam']);
+      SH.HUD.showReward(m.def.title + ' — reward summary', rows);
+    }
+    SH.HUD.toastQueue([m.def.from + ': Clean work. ' + U.fmtMoney(res.cash) + ' in hand, ' +
+      U.fmtMoney(res.banked) + ' banked. Stay shiny, partner.']);
   }
   if (m.def.id === 'hotwheels' && !state.taxiUnlocked) {
     state.taxiUnlocked = true;
@@ -165,7 +211,7 @@ function completeMission() {
       startMission(state.index);
     } else if (state.index >= C.missions.length) {
       state.storyDone = true;
-      if (SH.HUD) SH.HUD.toastQueue(['Marisol: That is the whole board, partner. Solstice Bay is ours. The streets stay open — taxi work pays forever.']);
+      if (SH.HUD) SH.HUD.toastQueue(['Marisol: That is the whole board, partner. Solstice Bay is ours. The streets stay open — taxi work and job boards pay forever.']);
       if (SH.Save) SH.Save.save();
     }
   }, 5000);
@@ -182,6 +228,8 @@ function failMission(reason) {
   state.active = null;
   state.deliverCar = null;
   state.targetCar = null;
+  state.timer = -1;
+  if (SH.HUD) SH.HUD.setTimer(-1);
   hideMarker();
   var idx = state.index;
   setTimeout(function () {
@@ -271,7 +319,7 @@ function updateCollect(dt) {
     state.caseIdx++;
     SH.Audio.pickup();
     SH.Audio.cash();
-    SH.G.money += 150;
+    if (SH.Economy) SH.Economy.addCash(150); else SH.G.money += 150;
     if (SH.HUD) SH.HUD.message('CASE ' + state.casesGot + '/3', '+$150 walking-around money', 1500);
     state.active.objective = 'Collect the cash cases (' + state.casesGot + '/3)';
     if (state.caseIdx >= C.caseSpots.length) { completeMission(); return; }
@@ -281,6 +329,54 @@ function updateCollect(dt) {
 
 function updateEscape(dt) {
   // completion is driven by Police.onWantedCleared; here we just narrate
+  refreshObjective();
+}
+
+// Round 11: Night Ledger — the story leans on the job system. Progress is
+// the delta in lifetime jobs completed since the mission began.
+function updateJobs(dt) {
+  var m = state.active;
+  var done = SH.Economy ? (SH.Economy.stats.jobsDone - state.jobsBase) : 0;
+  done = Math.max(0, Math.min(done, m.def.jobsNeeded));
+  m.objective = 'Complete side jobs (' + done + '/' + m.def.jobsNeeded + ') — press J at a job board';
+  if (done >= m.def.jobsNeeded) { completeMission(); return; }
+  refreshObjective();
+}
+
+// Round 11: Solstice Crown — Final Tide's bigger sibling: five stars AND
+// a hard clock on the delivery leg.
+function updateCrown(dt) {
+  var m = state.active;
+  if (state.phase === 'pickup') {
+    var g = locOf('gilded');
+    if (playerDistTo(g.x, g.z) < 6.5) {
+      state.phase = 'deliver';
+      state.timer = m.def.time;
+      SH.Police.setWanted(5);
+      SH.Police.deploy(5);
+      var mk = locOf('marina');
+      setMarker(mk.x, mk.z, 0xffd94d);
+      m.objective = 'Deliver the crown case to Marina Pier — five stars, one clock';
+      if (SH.HUD) SH.HUD.toastQueue(['Marisol: The crown is in hand and the whole bay just stood up. Marina Pier. DRIVE.']);
+    }
+  } else if (state.phase === 'deliver') {
+    state.timer -= dt;
+    if (SH.HUD) SH.HUD.setTimer(state.timer);
+    if (state.timer <= 0) {
+      if (SH.HUD) SH.HUD.setTimer(-1);
+      state.timer = -1;
+      SH.Police.clearWanted();
+      failMission('The crown went cold — the buyer vanished.');
+      return;
+    }
+    var t = locOf('marina');
+    if (playerDistTo(t.x, t.z) < 7) {
+      state.timer = -1;
+      if (SH.HUD) SH.HUD.setTimer(-1);
+      SH.Police.clearWanted();
+      completeMission();
+    }
+  }
   refreshObjective();
 }
 
@@ -383,11 +479,16 @@ function updateTaxi(dt) {
       var fare = Math.round(35 + straight * 0.85);
       var par = straight * 0.55 + 25;
       var bonus = elapsed < par ? Math.round((par - elapsed) * 1.2) : 0;
-      SH.G.money += fare + bonus;
+      // Round 11: fares pay through the economy too (bonus + banking + XP)
+      var res = SH.Economy
+        ? SH.Economy.pay(fare + bonus, { xp: C.economy.xpPerFare, why: 'fare' })
+        : { cash: fare + bonus, total: fare + bonus };
+      if (SH.Economy) SH.Economy.countFare();
       SH.Audio.cash();
       SH.Audio.complete();
       if (SH.HUD) {
-        SH.HUD.message('FARE PAID', U.fmtMoney(fare) + (bonus ? ' + ' + U.fmtMoney(bonus) + ' fast bonus' : ''), 2400);
+        SH.HUD.message('FARE PAID', U.fmtMoney(fare) + (bonus ? ' + ' + U.fmtMoney(bonus) + ' fast bonus' : '') +
+          ' · ' + U.fmtMoney(res.cash) + ' in hand', 2400);
         SH.HUD.setTaxiObjective('');
       }
       // passenger gets out near the destination
@@ -451,6 +552,7 @@ SH.Missions = {
   // Called when the player is wasted/busted: restart the current mission.
   onPlayerDown: function () {
     if (state.taxi) cancelTaxi('Fare lost.');
+    if (SH.Jobs) SH.Jobs.onPlayerDown();
     if (state.active) {
       var idx = state.index;
       if (state.deliverCar && !state.deliverCar.isPlayerCar) SH.Vehicles.remove(state.deliverCar);
@@ -458,6 +560,8 @@ SH.Missions = {
       state.active = null;
       state.deliverCar = null;
       state.targetCar = null;
+      state.timer = -1;
+      if (SH.HUD) SH.HUD.setTimer(-1);
       hideMarker();
       setTimeout(function () {
         if (SH.G.mode === 'playing' && !state.active && !state.storyDone) startMission(idx);
@@ -481,7 +585,7 @@ SH.Missions = {
   },
 
   restore: function (data) {
-    if (!data) return;
+    if (!data) { state.index = 0; state.taxiUnlocked = false; state.storyDone = false; return; }
     state.index = U.clamp(data.missionIndex || 0, 0, C.missions.length);
     state.taxiUnlocked = !!data.taxiUnlocked;
     state.storyDone = state.index >= C.missions.length;
@@ -510,6 +614,8 @@ SH.Missions = {
       else if (m.type === 'collect') updateCollect(dt);
       else if (m.type === 'escape') updateEscape(dt);
       else if (m.type === 'finale') updateFinale(dt);
+      else if (m.type === 'jobs') updateJobs(dt);
+      else if (m.type === 'crown') updateCrown(dt);
     }
     updateTaxi(dt);
   }

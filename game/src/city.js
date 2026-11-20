@@ -5,6 +5,10 @@
 // and neon signs, palm trees, street lights, a sandy beach, the sea and a
 // wooden pier on the east side. Also owns the static collision boxes and the
 // road/sidewalk queries every other system uses.
+// Round 11 props (kept cheap: shared geometries/materials, no per-frame
+// allocations): rooftop billboards with fresh ad copy, a string of warm
+// festoon lights along the promenade, and marina boats that bob on the
+// swell in update().
 // ============================================================================
 (function () {
 'use strict';
@@ -21,6 +25,8 @@ var lampGlows = [];        // street light glow sprites (night)
 var signMats = [];         // neon sign materials (flicker)
 var waterMat = null;
 var waterMesh = null;
+var boats = [];            // Round 11: {group, phase} marina boats that bob
+var festoonMats = [];      // Round 11: promenade string-light bulb materials
 var built = false;
 
 // --- canvas texture helpers --------------------------------------------------
@@ -88,6 +94,36 @@ function makeSignTexture(text, color) {
     g.fillText(text, 256, 50);
     g.shadowBlur = 8;
     g.fillText(text, 256, 50);
+  });
+}
+
+// Round 11: billboard faces get a brighter poster treatment — a saturated
+// gradient backdrop with the headline wrapped over two lines.
+function makeBillboardTexture(text, color) {
+  return canvasTex(512, 160, function (g) {
+    var grad = g.createLinearGradient(0, 0, 512, 160);
+    grad.addColorStop(0, '#1b1030');
+    grad.addColorStop(1, '#3a1440');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 512, 160);
+    g.strokeStyle = color;
+    g.lineWidth = 6;
+    g.strokeRect(8, 8, 496, 144);
+    g.font = 'bold 40px Arial, sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.shadowColor = color;
+    g.shadowBlur = 18;
+    g.fillStyle = '#ffffff';
+    var words = text.split(' ');
+    var lines = [''], li = 0;
+    for (var i = 0; i < words.length; i++) {
+      if ((lines[li] + ' ' + words[i]).length > 24 && li < 1) { li++; lines.push(''); }
+      lines[li] = (lines[li] + ' ' + words[i]).trim();
+    }
+    for (var j = 0; j < lines.length; j++) {
+      g.fillText(lines[j], 256, lines.length === 1 ? 80 : 52 + j * 56);
+    }
   });
 }
 
@@ -325,19 +361,30 @@ function buildGround(scene) {
       scene.add(post);
     }
   }
-  // marina mooring posts + a couple of simple boat hulls on the sand
-  var hullMat = new THREE.MeshLambertMaterial({ color: 0xf2f2f2 });
-  var hull2Mat = new THREE.MeshLambertMaterial({ color: 0x3f8fbf });
-  [[214, -26, hullMat], [220, 30, hull2Mat]].forEach(function (b) {
-    var hull = new THREE.Mesh(new THREE.BoxGeometry(7, 1.4, 2.6), b[2]);
-    hull.position.set(b[0], 0.75, b[1]);
-    hull.rotation.y = 0.4;
+  // Round 11: the two beached hulls became a small bobbing fleet — four
+  // hulls anchored just off the marina, animated in update() with a slow
+  // sine swell (position + a whisper of roll), zero per-frame allocation.
+  var hullCols = [0xf2f2f2, 0x3f8fbf, 0xe2483d, 0xf5c61d];
+  var boatSpots = [[232, -30], [244, 24], [258, -12], [238, 44]];
+  for (var bi = 0; bi < boatSpots.length; bi++) {
+    var grp = new THREE.Group();
+    var hull = new THREE.Mesh(new THREE.BoxGeometry(7, 1.4, 2.6),
+      new THREE.MeshLambertMaterial({ color: hullCols[bi] }));
+    hull.position.y = 0.4;
     hull.castShadow = true;
-    scene.add(hull);
+    grp.add(hull);
     var mast = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 5, 5), woodMat);
-    mast.position.set(b[0], 3.4, b[1]);
-    scene.add(mast);
-  });
+    mast.position.y = 3.1;
+    grp.add(mast);
+    var sail = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 3.4),
+      new THREE.MeshLambertMaterial({ color: 0xfff6e8, side: THREE.DoubleSide }));
+    sail.position.set(0.4, 3.0, 0);
+    grp.add(sail);
+    grp.position.set(boatSpots[bi][0], -0.15, boatSpots[bi][1]);
+    grp.rotation.y = 0.4 + bi * 0.35;
+    scene.add(grp);
+    boats.push({ group: grp, phase: bi * 1.7, baseY: -0.15 });
+  }
 }
 
 // --- buildings -----------------------------------------------------------------
@@ -570,6 +617,68 @@ function buildLights(scene) {
   }
 }
 
+// Round 11: festoon string lights along the promenade — two shared bulb
+// materials (warm / coral) on tiny shared-geometry spheres strung between
+// short posts. They read as bokeh dots by day and glow at night via
+// setNight(), and the whole run costs ~60 small meshes in one material
+// pair, so the draw-call budget barely notices.
+var festoonBulbGeo = null;
+function buildFestoon(scene) {
+  festoonBulbGeo = new THREE.SphereGeometry(0.14, 6, 5);
+  var warm = new THREE.MeshBasicMaterial({ color: 0xffca7a });
+  var coral = new THREE.MeshBasicMaterial({ color: 0xff8a7a });
+  festoonMats.push(warm, coral);
+  var wireMat = new THREE.MeshBasicMaterial({ color: 0x2a2d33 });
+  var postGeo = new THREE.CylinderGeometry(0.07, 0.07, 4.4, 6);
+  for (var z = -140; z < 140; z += 20) {
+    var post = new THREE.Mesh(postGeo, poleMat);
+    post.position.set(198.5, 2.2, z);
+    scene.add(post);
+    var post2 = new THREE.Mesh(postGeo, poleMat);
+    post2.position.set(198.5, 2.2, z + 20);
+    scene.add(post2);
+    // the wire: a thin stretched box sagging is overkill — a straight run
+    // at bulb height reads fine at game distance
+    var wire = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.03, 20), wireMat);
+    wire.position.set(198.5, 4.35, z + 10);
+    scene.add(wire);
+    for (var b = 1; b < 8; b++) {
+      var bulb = new THREE.Mesh(festoonBulbGeo, b % 2 ? warm : coral);
+      var sag = Math.sin((b / 8) * Math.PI) * 0.35;
+      bulb.position.set(198.5, 4.3 - sag, z + b * 2.5);
+      scene.add(bulb);
+    }
+  }
+}
+
+// Round 11: billboards from config copy, mounted high on their blocks and
+// angled toward the nearest road junction so drivers actually read them.
+function buildBillboards(scene) {
+  var frameMat = new THREE.MeshLambertMaterial({ color: 0x3a3f46 });
+  var postGeo2 = new THREE.CylinderGeometry(0.14, 0.18, 7, 6);
+  C.billboards.forEach(function (bb) {
+    var r = blockRect(bb[0], bb[1]);
+    var cx = (r.x1 + r.x2) / 2, cz = (r.z1 + r.z2) / 2;
+    var tex = makeBillboardTexture(bb[2], bb[3]);
+    var mat = new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide });
+    var board = new THREE.Mesh(new THREE.PlaneGeometry(17, 5.3), mat);
+    board.position.set(cx, 13.5, cz);
+    board.rotation.y = (bb[0] + bb[1]) % 2 ? Math.PI / 5 : -Math.PI / 6;
+    scene.add(board);
+    signMats.push(mat);
+    var back = new THREE.Mesh(new THREE.BoxGeometry(17.4, 5.7, 0.25), frameMat);
+    back.position.copy(board.position);
+    back.position.y -= 0.05;
+    back.rotation.y = board.rotation.y;
+    scene.add(back);
+    [-6.5, 6.5].forEach(function (off) {
+      var post = new THREE.Mesh(postGeo2, poleMat);
+      post.position.set(cx + off * Math.cos(board.rotation.y), 8.5, cz - off * Math.sin(board.rotation.y));
+      scene.add(post);
+    });
+  });
+}
+
 // --- district markers ------------------------------------------------------------
 function buildDistrictSigns(scene) {
   // One floating name board per district column along Bayfront Pkwy.
@@ -605,6 +714,8 @@ SH.City = {
     buildGreenery(scene);
     buildLights(scene);
     buildDistrictSigns(scene);
+    buildBillboards(scene);
+    buildFestoon(scene);
   },
 
   // Push a circle (x,z,r) out of every building box; returns corrected
@@ -699,6 +810,21 @@ SH.City = {
   update: function (dt, t) {
     // gentle water shimmer: slide the sea a breath in and out
     if (waterMesh) waterMesh.position.x = W.sandX + 350 + Math.sin(t * 0.24) * 2.2;
+    // Round 11: the marina fleet rides the same swell, phase-shifted
+    for (var i = 0; i < boats.length; i++) {
+      var b = boats[i];
+      b.group.position.y = b.baseY + Math.sin(t * 0.7 + b.phase) * 0.16;
+      b.group.rotation.z = Math.sin(t * 0.55 + b.phase * 1.3) * 0.045;
+      b.group.rotation.x = Math.cos(t * 0.48 + b.phase) * 0.03;
+    }
+    // Round 11 polish: the promenade festoons breathe — a slow warm pulse
+    // on the shared bulb materials (cheap: two colour writes per frame).
+    if (festoonMats.length) {
+      var tw = 0.86 + 0.14 * Math.sin(t * 6.2);
+      festoonMats[0].color.setRGB(1.0 * tw, 0.79 * tw, 0.48 * tw);
+      var tw2 = 0.86 + 0.14 * Math.sin(t * 6.2 + 2.1);
+      festoonMats[1].color.setRGB(1.0 * tw2, 0.54 * tw2, 0.48 * tw2);
+    }
     // one random neon sign flickers now and then
     if (signMats.length && Math.random() < dt * 0.7) {
       var m = signMats[Math.floor(Math.random() * signMats.length)];

@@ -5,6 +5,11 @@
 // step shared by every driver, and the traffic AI that flows around the road
 // grid on right-hand lanes, turning at intersections and braking for whoever
 // is in front.
+// Round 11 game feel: a capped pool of drift-smoke sprites that puff from
+// the rear tyres when the player's car is steered hard at speed, and a
+// near-miss detector — thread past another car close and fast and the HUD
+// pops a small score bonus (paid through the economy, with a cooldown so
+// one pass can never be farmed).
 // ============================================================================
 (function () {
 'use strict';
@@ -16,6 +21,91 @@ var U = SH.U;
 
 var cars = [];
 var blobTex = null;
+
+// --- Round 11: drift smoke pool ---------------------------------------------
+// Sprites are pre-created lazily up to the config cap and recycled forever:
+// zero allocation in the frame loop, and the cap keeps FPS honest.
+var smokePool = [];
+var smokeIdx = 0;
+var smokeMat = null;
+
+function getSmokeSprite() {
+  var max = (C.tuning && C.tuning.driftSmokeMax) || 90;
+  if (smokePool.length < max) {
+    if (!blobTex) blobTex = SH.City.blobTexture();
+    if (!smokeMat) {
+      smokeMat = new THREE.SpriteMaterial({
+        map: blobTex, color: 0xd8d8de, transparent: true, opacity: 0.3, depthWrite: false
+      });
+    }
+    var spr = new THREE.Sprite(smokeMat.clone());
+    spr.visible = false;
+    SH.scene.add(spr);
+    var p = { spr: spr, life: 0, maxLife: 1, vx: 0, vz: 0 };
+    smokePool.push(p);
+    return p;
+  }
+  var p2 = smokePool[smokeIdx % smokePool.length];
+  smokeIdx++;
+  return p2;
+}
+
+function puffSmoke(x, y, z, strength) {
+  var p = getSmokeSprite();
+  p.spr.position.set(x, y, z);
+  p.maxLife = 0.55 + strength * 0.3;
+  p.life = p.maxLife;
+  p.vx = SH.rng.range(-0.4, 0.4);
+  p.vz = SH.rng.range(-0.4, 0.4);
+  p.spr.scale.set(0.9, 0.9, 1);
+  p.spr.visible = true;
+}
+
+function updateSmoke(dt) {
+  for (var i = 0; i < smokePool.length; i++) {
+    var p = smokePool[i];
+    if (p.life <= 0) continue;
+    p.life -= dt;
+    if (p.life <= 0) { p.spr.visible = false; continue; }
+    var f = p.life / p.maxLife;
+    p.spr.position.x += p.vx * dt;
+    p.spr.position.z += p.vz * dt;
+    p.spr.position.y += dt * 1.1;
+    var s = 0.9 + (1 - f) * 2.4;
+    p.spr.scale.set(s, s, 1);
+    p.spr.material.opacity = 0.30 * f;
+  }
+}
+
+// --- Round 11: near-miss tracking --------------------------------------------
+// One global cooldown clock; a pass only counts when the player's car is
+// genuinely fast and the gap is thread-the-needle close but NOT a scrape
+// (collision range is handled by collideCars at 2.6 m centre distance).
+var nearMissCd = 0;
+
+function checkNearMiss(playerCar, dt) {
+  nearMissCd = Math.max(0, nearMissCd - dt);
+  if (nearMissCd > 0) return;
+  var spd = Math.abs(playerCar.speed);
+  if (spd < C.tuning.nearMissSpeed) return;
+  var pos = playerCar.mesh.position;
+  for (var i = 0; i < cars.length; i++) {
+    var other = cars[i];
+    if (other === playerCar || other.dead) continue;
+    var d = U.dist(pos.x, pos.z, other.mesh.position.x, other.mesh.position.z);
+    if (d > 2.75 && d < C.tuning.nearMissDist + 1.15) {
+      nearMissCd = C.tuning.nearMissCooldown;
+      if (SH.Economy) {
+        SH.Economy.countNearMiss();
+        SH.Economy.addCash(10);
+        SH.Economy.addXP(C.economy.xpPerNearMiss, 'near-miss');
+      }
+      if (SH.HUD && SH.HUD.scorePopup) SH.HUD.scorePopup('NEAR MISS +$10');
+      if (SH.Audio && SH.Audio.nearMiss) SH.Audio.nearMiss();
+      return;
+    }
+  }
+}
 
 var TYPES = {
   sedan:       { len: 4.4, wid: 1.9, bodyH: 0.62, cabH: 0.52, cabLen: 2.1, top: 'closed' },
@@ -167,6 +257,7 @@ function spawnCar(opts) {
     accel: opts.accel || 7.5,
     stuckT: 0,
     hitCooldown: 0,
+    smokeT: 0,                      // Round 11: drift-smoke emit accumulator
     isPlayerCar: false,
     dead: false
   };
@@ -255,6 +346,9 @@ function stepCar(car, dt, control) {
   // steering authority grows then fades with speed, like an arcade racer
   var spd = Math.abs(car.speed);
   var authority = U.clamp(spd / 3, 0, 1) * (1 - U.clamp((spd - 18) / 30, 0, 0.45));
+  // Round 11 drift feel: a hard steer at speed on the player's car breaks
+  // the rear loose a touch — extra yaw exactly when the smoke is pouring.
+  if (car.isPlayerCar && Math.abs(steer) > 0.55 && spd > 9) authority *= 1.18;
   car.heading += steer * 1.55 * authority * dt * (car.speed < 0 ? -1 : 1);
 
   var nx = pos.x + U.fwdX(car.heading) * car.speed * dt;
@@ -279,9 +373,30 @@ function stepCar(car, dt, control) {
   var wheels = car.mesh.userData.wheels;
   for (var wi = 0; wi < wheels.length; wi++) wheels[wi].rotation.x += car.speed * dt / 0.34;
 
+  // Round 11: drift smoke — hard steering at speed scrubs the rear tyres.
+  // Only the player's car smokes (it is the one being watched), emitted at
+  // the rear axle, throttled to ~20 puffs a second into the capped pool.
+  if (car.isPlayerCar && Math.abs(steer) > 0.55 && spd > 9) {
+    car.smokeT = (car.smokeT || 0) - dt;
+    if (car.smokeT <= 0) {
+      car.smokeT = 0.05;
+      var bx = pos.x - U.fwdX(car.heading) * (car.spec.len / 2 - 0.85);
+      var bz = pos.z - U.fwdZ(car.heading) * (car.spec.len / 2 - 0.85);
+      var rx2 = -U.fwdZ(car.heading), rz2 = U.fwdX(car.heading);
+      puffSmoke(bx + rx2 * 0.8, 0.3, bz + rz2 * 0.8, Math.abs(steer));
+      puffSmoke(bx - rx2 * 0.8, 0.3, bz - rz2 * 0.8, Math.abs(steer));
+    }
+  }
+  // heavy damage smoulders gently even in a straight line
+  if (car.damage > 78 && Math.random() < dt * 6) {
+    puffSmoke(pos.x + U.fwdX(car.heading) * car.spec.len * 0.4, 0.9,
+              pos.z + U.fwdZ(car.heading) * car.spec.len * 0.4, 0.5);
+  }
+
   car.hitCooldown = Math.max(0, car.hitCooldown - dt);
   collideCars(car, dt);
   if (Math.abs(car.speed) > 2.5) hitPeds(car);
+  if (car.isPlayerCar) checkNearMiss(car, dt);
 }
 
 // Car vs car: push apart, trade a little speed, register damage + crimes.
@@ -457,6 +572,7 @@ SH.Vehicles = {
   },
 
   update: function (dt) {
+    updateSmoke(dt);
     for (var i = cars.length - 1; i >= 0; i--) {
       var car = cars[i];
       if (car.dead) continue;

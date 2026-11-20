@@ -4,6 +4,10 @@
 // state machine (title attract mode → playing → paused / wasted / busted),
 // the slow day cycle anchored on golden hour, keyboard input, and the
 // localStorage save. Everything else lives in the SH.* modules.
+// Round 11: the loop also ticks the economy (odometer / top speed) and the
+// side-job system, the save grows an economy block, J takes jobs at boards,
+// and fresh runs get a guided 90-second onboarding chain of contextual
+// hints (skippable, and skipped automatically for returning saves).
 // ============================================================================
 (function () {
 'use strict';
@@ -150,6 +154,9 @@ SH.Save = {
       var data = SH.Missions.saveData();
       data.money = SH.G.money;
       data.playerPos = { x: SH.Player.pos.x, z: SH.Player.pos.z };
+      // Round 11: the economy block (bank, XP, lifetime stats) rides along
+      if (SH.Economy) data.economy = SH.Economy.saveData();
+      data.tutorialDone = tutorial.done;
       window.localStorage.setItem(SAVE_KEY, JSON.stringify(data));
     } catch (e) { /* storage unavailable: play on without saving */ }
   },
@@ -158,6 +165,58 @@ SH.Save = {
   }
 };
 
+// --- Round 11: guided onboarding -------------------------------------------------------
+// A five-beat chain for brand-new runs only. Each beat is one contextual
+// line pinned to the HUD; beats complete by *doing*, never by timer, and
+// Backspace skips the whole chain. Returning saves never see it.
+var tutorial = { active: false, step: 0, done: false, startX: 0, startZ: 0 };
+var TUT_STEPS = [
+  { text: 'Welcome to Solstice Bay — walk with WASD (Shift sprints, Space jumps)',
+    done: function () {
+      return U.dist(tutorial.startX, tutorial.startZ, SH.Player.pos.x, SH.Player.pos.z) > 4;
+    } },
+  { text: 'Grab a ride: walk up to any car and press E to get in',
+    done: function () { return SH.Player.inCar; } },
+  { text: 'Follow the gold pillar to Marina Pier — Marisol\'s package is waiting',
+    done: function () {
+      var m = C.locations.marina;
+      return U.dist(m.x, m.z, SH.Player.pos.x, SH.Player.pos.z) < 30 || SH.Missions.state.index >= 1;
+    } },
+  { text: 'Finish the errand at the pier — step into the gold ring',
+    done: function () { return SH.Missions.state.index >= 1; } },
+  { text: 'Side work pays: find a green job board and press J to take a job',
+    done: function () { return SH.Economy && SH.Economy.stats.jobsTaken >= 1; } }
+];
+
+function tutorialStart() {
+  tutorial.active = true;
+  tutorial.step = 0;
+  tutorial.startX = SH.Player.pos.x;
+  tutorial.startZ = SH.Player.pos.z;
+  if (SH.HUD) SH.HUD.setTutorial(TUT_STEPS[0].text + '  ·  Backspace skips the tour');
+}
+function tutorialSkip() {
+  tutorial.active = false;
+  tutorial.done = true;
+  if (SH.HUD) SH.HUD.setTutorial(null);
+}
+function tutorialUpdate() {
+  if (!tutorial.active) return;
+  var step = TUT_STEPS[tutorial.step];
+  if (!step) { tutorialSkip(); return; }
+  if (step.done()) {
+    tutorial.step++;
+    if (tutorial.step >= TUT_STEPS.length) {
+      tutorialSkip();
+      if (SH.HUD) SH.HUD.toastQueue(['Marisol: You know the bay now. The rest is money.']);
+      SH.Save.save();
+    } else if (SH.HUD) {
+      SH.HUD.setTutorial(TUT_STEPS[tutorial.step].text + '  ·  Backspace skips the tour');
+      if (SH.Audio) SH.Audio.pickup();
+    }
+  }
+}
+
 // --- state machine ------------------------------------------------------------------------
 function startGame(continueSave) {
   var save = continueSave ? SH.Save.read() : null;
@@ -165,10 +224,16 @@ function startGame(continueSave) {
   if (save) {
     SH.G.money = save.money || 0;
     SH.Missions.restore(save);
+    if (SH.Economy) SH.Economy.restore(save.economy || null);
     if (save.playerPos) SH.Player.pos.set(save.playerPos.x, 0, save.playerPos.z);
+    tutorial.done = !!save.tutorialDone;
+    tutorial.active = false;
+    if (SH.HUD) SH.HUD.setTutorial(null);
   } else {
     SH.G.money = 120;
     SH.Missions.restore(null);
+    if (SH.Economy) SH.Economy.restore(null);
+    tutorial.done = false;
   }
   SH.Player.heal();
   SH.Police.clearWanted();
@@ -177,6 +242,7 @@ function startGame(continueSave) {
   SH.G.mode = 'playing';
   SH.G.started = true;
   SH.Missions.begin();
+  if (!save && !tutorial.done) tutorialStart();
   SH.Save.save();
 }
 
@@ -192,7 +258,10 @@ function gameOver(kind) {
 
 function respawn() {
   // the city hospital drops you at Bayfront & Solstice, lighter of pocket
-  if (SH.G.mode === 'wasted') SH.G.money = Math.max(0, SH.G.money - 100);
+  if (SH.G.mode === 'wasted') {
+    if (SH.Economy) SH.Economy.spendCash(100);
+    else SH.G.money = Math.max(0, SH.G.money - 100);
+  }
   SH.Police.clearWanted();
   SH.Player.respawn(6, 40);
   SH.HUD.hideOver();
@@ -228,6 +297,10 @@ function bindInput() {
       SH.HUD.showPause(false);
     } else if (SH.G.mode === 'playing' && e.code === 'KeyT') {
       SH.Missions.toggleTaxi();
+    } else if (SH.G.mode === 'playing' && e.code === 'KeyJ') {
+      if (SH.Jobs) SH.Jobs.toggleAtPlayer();
+    } else if (SH.G.mode === 'playing' && e.code === 'Backspace' && tutorial.active) {
+      tutorialSkip();
     }
   });
   window.addEventListener('keyup', function (e) { SH.Keys[e.code] = false; });
@@ -237,6 +310,12 @@ function bindInput() {
   var btnContinue = document.getElementById('btn-continue');
   if (btnNew) btnNew.addEventListener('click', function () { SH.Audio.unlock(); startGame(false); });
   if (btnContinue) btnContinue.addEventListener('click', function () { SH.Audio.unlock(); startGame(true); });
+  // Round 11: the help overlay opens from the title and pauses alike
+  var btnHelp = document.getElementById('btn-help');
+  var helpClose = document.getElementById('help-close');
+  var helpOverlay = document.getElementById('help-overlay');
+  if (btnHelp && helpOverlay) btnHelp.addEventListener('click', function () { helpOverlay.classList.add('show'); });
+  if (helpClose && helpOverlay) helpClose.addEventListener('click', function () { helpOverlay.classList.remove('show'); });
 }
 
 // --- world construction ---------------------------------------------------------------------------
@@ -247,6 +326,7 @@ function buildWorld() {
   SH.Vehicles.spawnParked(C.tuning.parkedCount);
   SH.People.spawnCrowd(C.tuning.pedCount);
   SH.Missions.init();
+  if (SH.Jobs) SH.Jobs.init();
   SH.HUD.init();
 }
 
@@ -260,6 +340,7 @@ function attractCamera(dt) {
 
 // --- main loop -------------------------------------------------------------------------------------------------
 var lastNow = 0;
+var autosaveTimer = 20;
 function loop(now) {
   requestAnimationFrame(loop);
   var dt = Math.min(0.05, lastNow ? (now - lastNow) / 1000 : 0.016);
@@ -297,6 +378,13 @@ function loop(now) {
     SH.People.update(dt);
     SH.Police.update(dt);
     SH.Missions.update(dt);
+    if (SH.Jobs) SH.Jobs.update(dt);
+    if (SH.Economy) SH.Economy.update(dt);
+    tutorialUpdate();
+    // Round 11: gentle autosave — bank/XP/stats earned between mission
+    // saves should survive a closed tab, not just a completed mission.
+    autosaveTimer -= dt;
+    if (autosaveTimer <= 0) { autosaveTimer = 20; SH.Save.save(); }
     SH.HUD.update(dt);
   } else if (SH.G.mode === 'wasted' || SH.G.mode === 'busted') {
     SH.Vehicles.update(dt);
@@ -338,8 +426,22 @@ function boot() {
     var save = SH.Save.read();
     SH.HUD.showTitle(!!save);
     if (save) {
-      SH.HUD.setSaveInfo('Saved run: ' + U.fmtMoney(save.money || 0) + ' · mission ' +
-        Math.min((save.missionIndex || 0) + 1, C.missions.length) + ' of ' + C.missions.length);
+      // Round 11: the title card now carries the saver's reputation + bank
+      var line = 'Saved run: ' + U.fmtMoney(save.money || 0) + ' · mission ' +
+        Math.min((save.missionIndex || 0) + 1, C.missions.length) + ' of ' + C.missions.length;
+      if (save.economy) {
+        var tmp = document.createElement('span');
+        var lvlName = 'Street Rat';
+        var lvls = C.economy.levels;
+        for (var li = 0; li < lvls.length; li++) {
+          if ((save.economy.xp || 0) >= lvls[li].xp) lvlName = lvls[li].name;
+        }
+        line += ' · ' + lvlName + ' · bank ' + U.fmtMoney(save.economy.bank || 0);
+        tmp.remove();
+      }
+      SH.HUD.setSaveInfo(line);
+      var titleSave = document.getElementById('title-save-line');
+      if (titleSave) titleSave.textContent = line;
     }
   }
   requestAnimationFrame(loop);

@@ -3,6 +3,9 @@
 // A tiny seeded PRNG (mulberry32) plus the everyday math helpers the rest of
 // the game shares. City generation uses its own seeded instance so the world
 // layout is deterministic; gameplay randomness uses SH.rng.
+// Round 11: weighted picks (job-type rolls), string seeding (per-run job
+// boards) and a couple of extra helpers (sign, smoothstep, money with
+// cents-free bank formatting) used by the economy and jobs systems.
 // ============================================================================
 (function () {
 'use strict';
@@ -29,6 +32,27 @@ RNG.prototype.shuffle = function (arr) {
   }
   return arr;
 };
+// Weighted pick: entries are [value, weight] pairs. Jobs use this so VIP
+// rides stay rare and courier runs stay the bread and butter.
+RNG.prototype.weighted = function (pairs) {
+  var total = 0, i;
+  for (i = 0; i < pairs.length; i++) total += pairs[i][1];
+  var roll = this.next() * total;
+  for (i = 0; i < pairs.length; i++) {
+    roll -= pairs[i][1];
+    if (roll <= 0) return pairs[i][0];
+  }
+  return pairs[pairs.length - 1][0];
+};
+// Seed from a short string (FNV-1a) — handy for naming a run's job board.
+RNG.fromString = function (str) {
+  var h = 0x811c9dc5;
+  for (var i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return new RNG(h >>> 0);
+};
 
 SH.RNG = RNG;
 // Gameplay-wide generator; main.js reseeds it from the ?seed= parameter.
@@ -38,6 +62,11 @@ SH.rng = new RNG(7);
 SH.U = {
   clamp: function (v, a, b) { return v < a ? a : (v > b ? b : v); },
   lerp: function (a, b, t) { return a + (b - a) * t; },
+  sign: function (v) { return v > 0 ? 1 : (v < 0 ? -1 : 0); },
+  smoothstep: function (a, b, v) {
+    var t = SH.U.clamp((v - a) / (b - a), 0, 1);
+    return t * t * (3 - 2 * t);
+  },
   // shortest-path angle lerp, angles in radians
   lerpAngle: function (a, b, t) {
     var d = (b - a) % (Math.PI * 2);
@@ -61,10 +90,15 @@ SH.U = {
   fwdZ: function (h) { return Math.cos(h); },
   bearing: function (dx, dz) { return Math.atan2(dx, dz); },
   fmtMoney: function (n) {
-    var s = String(Math.floor(n));
+    var s = String(Math.floor(Math.abs(n)));
     var out = '';
     while (s.length > 3) { out = ',' + s.slice(-3) + out; s = s.slice(0, -3); }
-    return '$' + s + out;
+    return (n < 0 ? '-$' : '$') + s + out;
+  },
+  // Compact distance for HUD objective lines: "132 m" / "1.2 km".
+  fmtDist: function (m) {
+    if (m >= 1000) return (m / 1000).toFixed(1) + ' km';
+    return Math.round(m) + ' m';
   }
 };
 })();

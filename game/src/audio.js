@@ -5,6 +5,10 @@
 // rpm, a two-tone police siren, and one-shot effects (gunshot, crash, cash,
 // door, footsteps, jingles). The context only starts after the first user
 // gesture, as browsers require.
+// Round 11: mission/job success stingers (a brighter four-note lift plus a
+// level-up arpeggio), a second detuned engine oscillator whose hum tracks
+// road speed (not just rpm), and a siren whose pitch centre and wail rate
+// ease off as the nearest cruiser falls behind — distance you can hear.
 // ============================================================================
 (function () {
 'use strict';
@@ -14,10 +18,12 @@ var ctx = null;
 var master = null;
 var musicGain = null;
 var engineOsc = null, engineFilter = null, engineGain = null;
+var humOsc = null, humGain = null;          // Round 11: speed hum layer
 var sirenOsc = null, sirenGain = null, sirenLfo = null;
 var muted = false;
 var musicTimer = null;
 var chordStep = 0;
+var sirenLevel = 0;                          // smoothed siren loudness 0..1
 
 // Am7 — Fmaj7 — Cmaj7 — G6: warm, coastal, slightly melancholic.
 var CHORDS = [
@@ -115,6 +121,17 @@ function startEngine() {
   engineFilter.connect(engineGain);
   engineGain.connect(master);
   engineOsc.start();
+  // Round 11: a soft sine hum an octave-ish above the fundamental. Its
+  // pitch follows *speed* (wind/tyre energy), so coasting downhill at
+  // speed sounds different from revving at a standstill.
+  humOsc = ctx.createOscillator();
+  humOsc.type = 'sine';
+  humOsc.frequency.value = 82;
+  humGain = ctx.createGain();
+  humGain.gain.value = 0;
+  humOsc.connect(humGain);
+  humGain.connect(master);
+  humOsc.start();
 }
 
 function startSiren() {
@@ -185,22 +202,35 @@ SH.Audio = {
     return muted;
   },
   isMuted: function () { return muted; },
-  // rpm 0..1 while driving, -1 when on foot (engine silent).
-  setEngine: function (rpm) {
+  // rpm 0..1 while driving, -1 when on foot (engine silent). The optional
+  // speedKmh argument drives the Round 11 hum layer.
+  setEngine: function (rpm, speedKmh) {
     if (!ctx || !engineGain) return;
     var t = ctx.currentTime;
     if (rpm < 0) {
       engineGain.gain.setTargetAtTime(0, t, 0.1);
+      if (humGain) humGain.gain.setTargetAtTime(0, t, 0.12);
       return;
     }
     engineOsc.frequency.setTargetAtTime(55 + rpm * 165, t, 0.05);
     engineFilter.frequency.setTargetAtTime(300 + rpm * 1400, t, 0.05);
     engineGain.gain.setTargetAtTime(0.05 + rpm * 0.05, t, 0.08);
+    if (humOsc && humGain) {
+      var spd = Math.abs(speedKmh || 0);
+      humOsc.frequency.setTargetAtTime(70 + spd * 1.15, t, 0.09);
+      humGain.gain.setTargetAtTime(Math.min(0.028, spd * 0.00045), t, 0.12);
+    }
   },
-  // level 0..1 by nearest police distance.
+  // level 0..1 by nearest police distance. Round 11: the wail also sags —
+  // as level drops the centre pitch and toggle rate fall, so a cruiser
+  // dropping behind literally sounds like it is giving up.
   setSiren: function (level) {
     if (!ctx || !sirenGain) return;
-    sirenGain.gain.setTargetAtTime(level * 0.045, ctx.currentTime, 0.15);
+    sirenLevel += (level - sirenLevel) * 0.25;
+    var t = ctx.currentTime;
+    sirenGain.gain.setTargetAtTime(sirenLevel * 0.045, t, 0.15);
+    if (sirenOsc) sirenOsc.frequency.setTargetAtTime(830 + sirenLevel * 190, t, 0.3);
+    if (sirenLfo) sirenLfo.frequency.setTargetAtTime(0.34 + sirenLevel * 0.34, t, 0.3);
   },
   shot: function () { noiseBurst(0.16, 2600, 0.5, 'highpass'); blip(220, 40, 0.12, 'square', 0.25); },
   crash: function (hard) { noiseBurst(hard ? 0.4 : 0.2, 500, hard ? 0.6 : 0.3); blip(90, 35, 0.25, 'sine', 0.3); },
@@ -213,6 +243,19 @@ SH.Audio = {
     blip(659, 659, 0.14, 'triangle', 0.25, 0.12);
     blip(784, 784, 0.22, 'triangle', 0.28, 0.24);
   },
+  // Round 11 stingers: a job lands softer than a story mission; a level-up
+  // gets the full rising arpeggio so the player hears the rung change.
+  jobDone: function () {
+    blip(587, 587, 0.11, 'triangle', 0.22);
+    blip(880, 880, 0.17, 'triangle', 0.24, 0.09);
+  },
+  levelUp: function () {
+    blip(523, 523, 0.12, 'triangle', 0.24);
+    blip(659, 659, 0.12, 'triangle', 0.24, 0.10);
+    blip(784, 784, 0.12, 'triangle', 0.26, 0.20);
+    blip(1046, 1046, 0.3, 'triangle', 0.28, 0.30);
+  },
+  nearMiss: function () { blip(1180, 1560, 0.07, 'sine', 0.10); },
   fail: function () { blip(330, 196, 0.35, 'sawtooth', 0.15); },
   busted: function () { blip(392, 392, 0.2, 'square', 0.15); blip(311, 233, 0.4, 'square', 0.15, 0.2); },
   wasted: function () { blip(220, 55, 0.9, 'sawtooth', 0.2); },
