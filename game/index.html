@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Solstice Heat</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0b1026; }
+  body { font-family: "Segoe UI", Arial, Helvetica, sans-serif; color: #fff; }
+  #game-root { position: fixed; inset: 0; }
+  #game-root canvas { display: block; }
+
+  /* ---------- HUD ---------- */
+  #hud { position: fixed; inset: 0; pointer-events: none; opacity: 0; transition: opacity .5s; z-index: 5; }
+  #hud.live { opacity: 1; }
+  .hud-box { background: rgba(8, 12, 24, .55); border: 1px solid rgba(255,255,255,.14); border-radius: 10px; backdrop-filter: blur(2px); }
+
+  #hud-top-left { position: absolute; top: 14px; left: 14px; padding: 10px 14px; min-width: 168px; }
+  #hud-money { font-size: 26px; font-weight: 800; color: #7be495; letter-spacing: .5px; text-shadow: 0 2px 6px rgba(0,0,0,.6); }
+  #hud-stars { font-size: 21px; color: #ffd94d; letter-spacing: 3px; min-height: 24px; text-shadow: 0 0 8px rgba(255,180,0,.0); }
+  #hud-stars.hot { text-shadow: 0 0 10px rgba(255,120,40,.85); }
+  #hud-stars.rising { animation: starblink .5s steps(2) infinite; }
+  @keyframes starblink { 50% { opacity: .35; } }
+  #hud-eye { font-size: 11px; letter-spacing: 1px; min-height: 14px; }
+  #hud-eye.seen { color: #ff6b5e; }
+  #hud-eye.hidden-eye { color: #8ef6ff; }
+  #bust-wrap { margin-top: 6px; height: 7px; background: rgba(255,255,255,.15); border-radius: 4px; overflow: hidden; display: none; }
+  #bust-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #2f7bff, #ff3b30); transition: width .1s linear; }
+
+  #hud-objective { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); max-width: 560px; padding: 9px 18px; text-align: center; }
+  #hud-obj-text { font-size: 15px; font-weight: 600; color: #ffe9b0; }
+  #hud-obj-dist { font-size: 13px; color: #8ef6ff; margin-left: 8px; font-weight: 700; }
+  #hud-timer { font-size: 20px; font-weight: 800; color: #fff; margin-top: 2px; }
+  #hud-timer.urgent { color: #ff5e5e; animation: starblink .4s steps(2) infinite; }
+  #hud-taxi { display: none; }
+
+  #hud-top-right { position: absolute; top: 14px; right: 14px; text-align: right; }
+  #radio-ticker { display: inline-block; padding: 7px 12px; font-size: 12.5px; color: #ffd9ec; letter-spacing: .4px; }
+  #hud-district { margin-top: 6px; font-size: 11.5px; color: rgba(255,255,255,.75); text-shadow: 0 1px 4px rgba(0,0,0,.8); padding-right: 4px; }
+  #mute-note { font-size: 11px; color: #ffb3ab; margin-top: 4px; padding-right: 4px; }
+
+  #hud-bottom-left { position: absolute; left: 14px; bottom: 14px; }
+  #minimap { display: block; border-radius: 10px; border: 1px solid rgba(255,255,255,.25); box-shadow: 0 4px 18px rgba(0,0,0,.45); }
+  #hud-health-wrap { margin-top: 8px; height: 13px; background: rgba(8,12,24,.6); border: 1px solid rgba(255,255,255,.2); border-radius: 7px; overflow: hidden; }
+  #hud-health-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #ff5e7a, #ffb347); transition: width .18s; }
+  #hud-health-fill.low { animation: starblink .45s steps(2) infinite; }
+
+  #hud-speed-wrap { position: absolute; right: 22px; bottom: 18px; text-align: right; text-shadow: 0 2px 8px rgba(0,0,0,.75); }
+  #hud-speed { font-size: 46px; font-weight: 800; line-height: 1; }
+  #hud-speed-wrap small { font-size: 13px; letter-spacing: 2px; color: rgba(255,255,255,.8); }
+
+  #prompt { position: absolute; left: 50%; bottom: 118px; transform: translateX(-50%); padding: 8px 16px; font-size: 14.5px; font-weight: 600; color: #d9fbff; opacity: 0; transition: opacity .15s; }
+  #prompt.show { opacity: 1; }
+
+  #center-msg { position: absolute; top: 30%; left: 50%; transform: translate(-50%, -50%) scale(.96); text-align: center; opacity: 0; transition: opacity .25s, transform .25s; pointer-events: none; }
+  #center-msg.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  #center-title { font-size: 42px; font-weight: 900; letter-spacing: 3px; color: #ffd94d; text-shadow: 0 0 22px rgba(255,140,0,.55), 0 3px 8px rgba(0,0,0,.7); }
+  #center-sub { font-size: 16.5px; color: #fff; margin-top: 6px; text-shadow: 0 2px 6px rgba(0,0,0,.8); }
+
+  #toast { position: absolute; left: 50%; bottom: 30px; transform: translateX(-50%) translateY(16px); max-width: 620px; padding: 11px 18px; font-size: 14.5px; line-height: 1.45; color: #f4f7ff; opacity: 0; transition: opacity .3s, transform .3s; border-left: 4px solid #ff5e8a; }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* ---------- screens ---------- */
+  .screen { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; opacity: 0; visibility: hidden; transition: opacity .45s; z-index: 10; }
+  .screen.show { opacity: 1; visibility: visible; }
+  #title-screen { background: linear-gradient(180deg, rgba(10,10,30,.18) 0%, rgba(10,10,30,.55) 78%, rgba(5,5,16,.88) 100%); }
+  .game-title { font-size: 84px; font-weight: 900; letter-spacing: 4px; line-height: .95;
+    background: linear-gradient(180deg, #ffe66d 15%, #ff9e5e 55%, #ff5e8a 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    filter: drop-shadow(0 4px 0 rgba(90,10,60,.55)) drop-shadow(0 10px 26px rgba(0,0,0,.6)); }
+  .game-sub { margin-top: 10px; font-size: 17px; letter-spacing: 5px; color: #bfefff; text-transform: uppercase; text-shadow: 0 2px 8px rgba(0,0,0,.8); }
+  .title-btns { margin-top: 34px; display: flex; gap: 14px; }
+  .tbtn { pointer-events: auto; cursor: pointer; border: 2px solid rgba(255,255,255,.5); background: rgba(10,14,28,.65); color: #fff;
+    font-size: 17px; font-weight: 700; letter-spacing: 1.5px; padding: 12px 30px; border-radius: 30px; transition: all .15s; }
+  .tbtn:hover { background: #ff5e8a; border-color: #ff5e8a; transform: translateY(-2px); }
+  .tbtn.primary { background: #ff5e8a; border-color: #ff5e8a; }
+  .tbtn.primary:hover { background: #ff7ba3; }
+  #save-info { margin-top: 14px; font-size: 13.5px; color: #ffe9b0; min-height: 18px; }
+  .controls { margin-top: 30px; font-size: 13px; line-height: 1.9; color: rgba(255,255,255,.85); text-shadow: 0 1px 5px rgba(0,0,0,.9); }
+  .controls b { color: #ffd94d; }
+
+  #over-screen { background: rgba(20, 2, 8, .45); }
+  #over-title { font-size: 92px; font-weight: 900; letter-spacing: 10px; }
+  #over-title.wasted { color: #ff3b30; text-shadow: 0 0 34px rgba(255,40,30,.6), 0 4px 10px rgba(0,0,0,.8); }
+  #over-title.busted { color: #7db4ff; text-shadow: 0 0 34px rgba(60,120,255,.6), 0 4px 10px rgba(0,0,0,.8); }
+  #over-sub { margin-top: 10px; font-size: 16px; color: #fff; text-shadow: 0 2px 6px rgba(0,0,0,.9); }
+  #pause-screen { background: rgba(5, 8, 20, .55); }
+  #pause-screen h2 { font-size: 44px; letter-spacing: 6px; }
+  #pause-screen p { margin-top: 8px; color: rgba(255,255,255,.85); }
+
+  /* big title burned into the cover screenshot */
+  #shot-title { display: none; position: fixed; left: 0; right: 0; bottom: 7%; text-align: center; z-index: 8; pointer-events: none; }
+  #shot-title .game-title { font-size: 96px; }
+  #shot-title .game-sub { font-size: 19px; }
+
+  /* cover shot: minimal HUD */
+  body.shot-cover #hud-bottom-left, body.shot-cover #hud-objective,
+  body.shot-cover #hud-top-right, body.shot-cover #toast { display: none; }
+  body.shotmode #title-screen { display: none; }
+
+  #boot-ok, #boot-err { position: fixed; left: -9999px; top: -9999px; width: 1px; height: 1px; overflow: hidden; }
+</style>
+</head>
+<body>
+<div id="game-root"></div>
+
+<!-- ======================= HUD ======================= -->
+<div id="hud">
+  <div id="hud-top-left" class="hud-box">
+    <div id="hud-money">$0</div>
+    <div id="hud-stars"></div>
+    <div id="hud-eye"></div>
+    <div id="bust-wrap"><div id="bust-fill"></div></div>
+  </div>
+
+  <div id="hud-objective" class="hud-box" style="display:none">
+    <span id="hud-obj-text"></span><span id="hud-obj-dist"></span>
+    <div id="hud-timer" style="display:none"></div>
+  </div>
+  <div id="hud-taxi"></div>
+
+  <div id="hud-top-right">
+    <span id="radio-ticker" class="hud-box"></span>
+    <div id="hud-district"></div>
+    <div id="mute-note"></div>
+  </div>
+
+  <div id="hud-bottom-left">
+    <canvas id="minimap" width="252" height="190"></canvas>
+    <div id="hud-health-wrap"><div id="hud-health-fill"></div></div>
+  </div>
+
+  <div id="hud-speed-wrap" style="display:none"><span id="hud-speed">0</span> <small>KM/H</small></div>
+
+  <div id="prompt" class="hud-box"></div>
+  <div id="center-msg"><div id="center-title"></div><div id="center-sub"></div></div>
+  <div id="toast" class="hud-box"><span id="toast-text"></span></div>
+</div>
+
+<!-- ======================= TITLE ======================= -->
+<div id="title-screen" class="screen">
+  <div class="game-title">SOLSTICE<br>HEAT</div>
+  <div class="game-sub">Solstice Bay · Golden Hour Crime</div>
+  <div class="title-btns">
+    <button id="btn-new" class="tbtn primary">NEW GAME</button>
+    <button id="btn-continue" class="tbtn">CONTINUE</button>
+  </div>
+  <div id="save-info"></div>
+  <div class="controls">
+    <b>WASD</b> move / drive &nbsp;·&nbsp; <b>E</b> enter / steal car &nbsp;·&nbsp; <b>F</b> shoot (on foot)<br>
+    <b>Shift</b> sprint &nbsp;·&nbsp; <b>Space</b> jump &nbsp;·&nbsp; <b>T</b> taxi job (in a car) &nbsp;·&nbsp; <b>Arrows</b> camera<br>
+    <b>P / Esc</b> pause &nbsp;·&nbsp; <b>M</b> mute &nbsp;·&nbsp; <b>Enter</b> start
+  </div>
+</div>
+
+<!-- ======================= WASTED / BUSTED ======================= -->
+<div id="over-screen" class="screen">
+  <div id="over-title">WASTED</div>
+  <div id="over-sub"></div>
+</div>
+
+<!-- ======================= PAUSE ======================= -->
+<div id="pause-screen" class="screen">
+  <h2>PAUSED</h2>
+  <p>The bay waits for no one — except now. P / Esc to resume.</p>
+</div>
+
+<div id="shot-title">
+  <div class="game-title">SOLSTICE HEAT</div>
+  <div class="game-sub">Solstice Bay · Golden Hour Crime</div>
+</div>
+
+<div id="boot-ok"></div>
+<div id="boot-err"></div>
+
+<script>
+  // Early error trap: the smoke test reads #boot-err, players never see it.
+  window.__errors = [];
+  window.onerror = function (msg, src, line) {
+    window.__errors.push(String(msg));
+    var e = document.getElementById('boot-err');
+    if (e) e.textContent = (e.textContent ? e.textContent + ' | ' : '') + msg;
+  };
+</script>
+<script src="vendor/three.min.js"></script>
+<script src="src/config.js"></script>
+<script src="src/rng.js"></script>
+<script src="src/audio.js"></script>
+<script src="src/city.js"></script>
+<script src="src/vehicles.js"></script>
+<script src="src/people.js"></script>
+<script src="src/player.js"></script>
+<script src="src/police.js"></script>
+<script src="src/missions.js"></script>
+<script src="src/hud.js"></script>
+<script src="src/shots.js"></script>
+<script src="src/main.js"></script>
+</body>
+</html>
