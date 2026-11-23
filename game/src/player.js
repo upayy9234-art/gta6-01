@@ -1,367 +1,110 @@
-// ============================================================================
-// SOLSTICE HEAT — player.js
-// The hero: a fixer in a Hawaiian shirt. On foot he walks/sprints/jumps with
-// WASD relative to a smooth third-person camera; E steals any nearby car
-// (the traffic driver bails out and runs); while driving, the same camera
-// chases the car and the shared vehicle physics takes over. F fires a
-// hitscan shot on foot. Owns health, damage and the enter/exit logic.
-// Round 11 game feel: taking damage now answers back — a red edge-flash on
-// the HUD and a short camera shake scaled by the hit, so a graze trembles
-// and a wreck genuinely rattles. The engine call also forwards road speed
-// so audio.js can run its speed-hum layer.
-// ============================================================================
-(function () {
-'use strict';
+// Solstice Heat - the player: a fixer in a Hawaiian shirt.
+// On foot: walk/run, melee, pistol, swimming. In a car: hands off to
+// vehicles.js physics. Health, respawn and building collision live here.
 window.SH = window.SH || {};
-
-var C = SH.Config;
-var U = SH.U;
-
-var mesh = null;
-var parts = null;
-var camYaw = Math.PI;        // camera looks north-ish at spawn
-var camPitch = 0.32;
-var phase = 0;
-var vy = 0;
-var grounded = true;
-var shotCooldown = 0;
-var stepTimer = 0;
-var flashMesh = null;
-var flashT = 0;
-var lastDamageT = -99;
-var promptCar = null;
-var shakeAmp = 0;            // Round 11: camera shake amplitude, decays fast
-var shakeT = 0;
-
-var P = {
-  pos: null,                 // THREE.Vector3 (mesh position)
-  heading: 0,
-  health: C.tuning.playerHealth,
-  alive: true,
-  inCar: false,
-  car: null,
-  moneyEarned: 0
-};
-
-function build() {
-  mesh = SH.People.makePersonMesh({ shirt: 0x0e8a7b, skin: 0xc68642, pants: 0xf3e5d8, player: true });
-  parts = mesh.userData.parts;
-  mesh.position.set(-84, 0, 24);
-  SH.scene.add(mesh);
-  P.pos = mesh.position;
-  P.heading = Math.PI / 2;
-
-  // muzzle flash: a small additive star that blinks on for a frame or two
-  var cv = document.createElement('canvas');
-  cv.width = cv.height = 64;
-  var g = cv.getContext('2d');
-  g.translate(32, 32);
-  g.fillStyle = '#ffe9a0';
-  for (var i = 0; i < 4; i++) {
-    g.rotate(Math.PI / 4);
-    g.fillRect(-2, -30, 4, 60);
-  }
-  g.beginPath(); g.arc(0, 0, 9, 0, 6.29); g.fill();
-  var tex = new THREE.CanvasTexture(cv);
-  flashMesh = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: tex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false
-  }));
-  flashMesh.scale.set(0.9, 0.9, 1);
-  flashMesh.visible = false;
-  SH.scene.add(flashMesh);
-}
-
-function nearestStealable() {
-  return SH.Vehicles.nearestCar(P.pos.x, P.pos.z, 3.4);
-}
-
-function enterCar(car) {
-  if (!car || P.inCar) return;
-  var wasTraffic = car.mode === 'traffic';
-  if (car.driver) {
-    // driver bails out and sprints off
-    var ped = car.driver;
-    car.driver = null;
-    ped.state = 'flee';
-    ped.fleeT = 4;
-    ped.threat = { x: P.pos.x, z: P.pos.z };
-    ped.mesh.visible = true;
-    ped.pos.set(car.mesh.position.x + 1.6, 0, car.mesh.position.z + 0.5);
-    ped.target = null;
-  }
-  if (car.mode === 'parked' && car.lockedAlarm) { /* reserved for future alarms */ }
-  car.mode = 'player';
-  car.isPlayerCar = true;
-  P.inCar = true;
-  P.car = car;
-  mesh.visible = false;
-  SH.Audio.door();
-  if (wasTraffic && SH.Police) SH.Police.commitCrime('steal', P.pos.x, P.pos.z);
-  if (SH.Missions) SH.Missions.onEnterCar(car);
-}
-
-function exitCar() {
-  if (!P.inCar || !P.car) return;
-  var car = P.car;
-  car.mode = 'off';
-  car.isPlayerCar = false;
-  P.inCar = false;
-  P.car = null;
-  // step out on the left side of the car
-  var rx = -U.fwdZ(car.heading), rz = U.fwdX(car.heading);
-  var res = SH.City.collide(car.mesh.position.x + rx * 1.8, car.mesh.position.z + rz * 1.8, 0.42);
-  P.pos.set(res.x, 0, res.z);
-  P.heading = car.heading;
-  mesh.visible = true;
-  SH.Audio.door();
-  SH.Audio.setEngine(-1);
-  if (SH.Missions) SH.Missions.onExitCar(car);
-}
-
-function shoot() {
-  if (shotCooldown > 0 || P.inCar || !P.alive) return;
-  shotCooldown = 0.26;
-  SH.Audio.shot();
-  SH.People.alertAt(P.pos.x, P.pos.z, 20);
-  if (SH.Police) SH.Police.commitCrime('shot', P.pos.x, P.pos.z);
-  // muzzle flash at the hand, recoil kick on the camera
-  var fx = P.pos.x + U.fwdX(P.heading) * 0.55;
-  var fz = P.pos.z + U.fwdZ(P.heading) * 0.55;
-  flashMesh.position.set(fx, 1.35, fz);
-  flashMesh.visible = true;
-  flashT = 0.05;
-  camPitch += 0.035;
-
-  // hitscan: nearest valid target inside a narrow cone ahead
-  var dirx = U.fwdX(P.heading), dirz = U.fwdZ(P.heading);
-  var bestT = 46, bestKind = null, bestObj = null;
-  var i, ped, car;
-  var list = SH.People.list;
-  for (i = 0; i < list.length; i++) {
-    ped = list[i];
-    if (ped.state === 'down' || ped.state === 'inCar' || ped.state === 'gone') continue;
-    var dx = ped.pos.x - P.pos.x, dz = ped.pos.z - P.pos.z;
-    var along = dx * dirx + dz * dirz;
-    if (along < 1 || along > bestT) continue;
-    var lat = Math.abs(dx * -dirz + dz * dirx);
-    if (lat < 0.9 + along * 0.03) { bestT = along; bestKind = 'ped'; bestObj = ped; }
-  }
-  var cars = SH.Vehicles.list;
-  for (i = 0; i < cars.length; i++) {
-    car = cars[i];
-    if (car.dead) continue;
-    var cx = car.mesh.position.x - P.pos.x, cz = car.mesh.position.z - P.pos.z;
-    var alongC = cx * dirx + cz * dirz;
-    if (alongC < 1 || alongC > bestT) continue;
-    var latC = Math.abs(cx * -dirz + cz * dirx);
-    if (latC < 1.7 + alongC * 0.02) { bestT = alongC; bestKind = 'car'; bestObj = car; }
-  }
-  if (bestKind === 'ped') {
-    bestObj.shootDown();
-    if (SH.Police) SH.Police.commitCrime('pedShot', P.pos.x, P.pos.z);
-  } else if (bestKind === 'car') {
-    bestObj.damage = Math.min(100, bestObj.damage + 22);
-    if (bestObj.mode === 'police' && SH.Police) SH.Police.commitCrime('policeHit', P.pos.x, P.pos.z);
-    else if (SH.Police) SH.Police.commitCrime('carHit', P.pos.x, P.pos.z);
-    if (bestObj.driver && SH.rng.chance(0.5)) {
-      var d = bestObj.driver;
-      bestObj.driver = null;
-      d.state = 'flee'; d.fleeT = 4; d.threat = { x: P.pos.x, z: P.pos.z };
-      d.mesh.visible = true;
-      d.pos.set(bestObj.mesh.position.x + 1.5, 0, bestObj.mesh.position.z);
+(function (SH) {
+  'use strict';
+  var U = SH.U, C = SH.Config;
+  var Pl = { x: 330, z: 30, heading: -Math.PI / 2, health: 100, ammo: C.PLAYER.pistolAmmoStart, car: null, swim: false, phase: 0, attackCd: 0, shirtIdx: 0 };
+  SH.Player = Pl;
+  Pl.build = function (scene) {
+    var g = new THREE.Group();
+    Pl.shirtMat = new THREE.MeshLambertMaterial({ color: C.SHIRT_COLORS[0] });
+    var torso = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.76, 0.36), Pl.shirtMat); torso.position.y = 1.1; g.add(torso);
+    var head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 10, 10), new THREE.MeshLambertMaterial({ color: 0xf2c79b })); head.position.y = 1.76; g.add(head);
+    var hat = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.34, 0.12, 10), new THREE.MeshLambertMaterial({ color: 0xffe14d })); hat.position.y = 1.94; g.add(hat);
+    function limb(mat, w, l) { var m = new THREE.Mesh(new THREE.BoxGeometry(w, l, w), mat); m.geometry.translate(0, -l / 2, 0); return m; }
+    var shorts = new THREE.MeshLambertMaterial({ color: 0x2266aa });
+    Pl.armL = limb(Pl.shirtMat, 0.17, 0.64); Pl.armL.position.set(-0.42, 1.44, 0); g.add(Pl.armL);
+    Pl.armR = limb(Pl.shirtMat, 0.17, 0.64); Pl.armR.position.set(0.42, 1.44, 0); g.add(Pl.armR);
+    Pl.legL = limb(shorts, 0.21, 0.78); Pl.legL.position.set(-0.17, 0.78, 0); g.add(Pl.legL);
+    Pl.legR = limb(shorts, 0.21, 0.78); Pl.legR.position.set(0.17, 0.78, 0); g.add(Pl.legR);
+    Pl.gun = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.14, 0.42), new THREE.MeshLambertMaterial({ color: 0x222222 }));
+    Pl.gun.position.set(0.42, 0.86, 0.3); Pl.gun.visible = false; g.add(Pl.gun);
+    g.position.set(Pl.x, 0, Pl.z); scene.add(g);
+    Pl.mesh = g;
+    return Pl;
+  };
+  Pl.setShirt = function (idx) { Pl.shirtIdx = idx % C.SHIRT_COLORS.length; if (Pl.shirtMat) Pl.shirtMat.color.setHex(C.SHIRT_COLORS[Pl.shirtIdx]); };
+  Pl.pos = function () { return Pl.car ? { x: Pl.car.x, z: Pl.car.z } : { x: Pl.x, z: Pl.z }; };
+  Pl.enterCar = function (car) {
+    Pl.car = car; car.isPlayer = true; car.parked = false;
+    if (Pl.mesh) Pl.mesh.visible = false;
+    if (SH.Audio) SH.Audio.door();
+    if (car.model.police && SH.Police) SH.Police.reportCrime('theft', car.x, car.z, 1);
+    else if (SH.Police) SH.Police.reportCrime('theft', car.x, car.z, 0.35);
+  };
+  Pl.exitCar = function () {
+    if (!Pl.car) return;
+    var car = Pl.car; car.isPlayer = false; Pl.car = null;
+    Pl.x = car.x + Math.cos(car.heading) * 2.4; Pl.z = car.z - Math.sin(car.heading) * 2.4;
+    Pl.heading = car.heading;
+    if (Pl.mesh) { Pl.mesh.visible = true; Pl.mesh.position.set(Pl.x, 0, Pl.z); }
+    if (SH.Audio) SH.Audio.door();
+  };
+  Pl.hurt = function (amt) {
+    Pl.health -= amt;
+    if (Pl.health <= 0) { Pl.health = 0; if (SH.Main) SH.Main.onWasted(); }
+  };
+  Pl.heal = function (amt) { Pl.health = U.clamp(Pl.health + amt, 0, C.PLAYER.maxHealth); };
+  Pl.update = function (dt, input, camHeading) {
+    Pl.attackCd = Math.max(0, Pl.attackCd - dt);
+    if (Pl.car) { Pl.x = Pl.car.x; Pl.z = Pl.car.z; Pl.heading = Pl.car.heading; return; }
+    var sp = input.run ? C.PLAYER.runSpeed : C.PLAYER.walkSpeed;
+    Pl.swim = Pl.x > C.WATER_X + 6;
+    if (Pl.swim) sp = C.PLAYER.swimSpeed;
+    var mx = 0, mz = 0;
+    if (input.up) { mx += Math.sin(camHeading); mz += Math.cos(camHeading); }
+    if (input.down) { mx -= Math.sin(camHeading); mz -= Math.cos(camHeading); }
+    if (input.left) { mx += Math.cos(camHeading); mz -= Math.sin(camHeading); }
+    if (input.right) { mx -= Math.cos(camHeading); mz += Math.sin(camHeading); }
+    var moving = (mx !== 0 || mz !== 0);
+    if (moving) {
+      var len = Math.sqrt(mx * mx + mz * mz); mx /= len; mz /= len;
+      Pl.heading = U.angleLerp(Pl.heading, Math.atan2(mx, mz), U.clamp(dt * 12, 0, 1));
+      var nx = Pl.x + mx * sp * dt, nz = Pl.z + mz * sp * dt;
+      if (!SH.City.collide(nx, Pl.z, C.PLAYER.radius)) Pl.x = nx;
+      if (!SH.City.collide(Pl.x, nz, C.PLAYER.radius)) Pl.z = nz;
+      Pl.x = U.clamp(Pl.x, -440, 560); Pl.z = U.clamp(Pl.z, -440, 440);
+      Pl.phase += dt * sp * 1.9;
+      if (!Pl.swim && Math.random() < dt * 2.2 && SH.Audio) SH.Audio.step();
     }
-  }
-}
-
-// Round 11: apply the decaying shake on top of whichever camera the mode
-// update just placed. Random offsets each frame at ~30 Hz read as impact,
-// not as camera drift, and the amplitude envelope keeps it honest.
-function applyShake(dt) {
-  if (shakeAmp <= 0.003) { shakeAmp = 0; return; }
-  shakeT -= dt;
-  if (shakeT <= 0) {
-    shakeT = 0.033;
-    var cam = SH.camera;
-    cam.position.x += (Math.random() - 0.5) * shakeAmp;
-    cam.position.y += (Math.random() - 0.5) * shakeAmp * 0.7;
-    cam.position.z += (Math.random() - 0.5) * shakeAmp;
-  }
-  shakeAmp *= Math.pow(0.0015, dt); // fast decay: ~gone in half a second
-}
-
-function addShake(amount) {
-  shakeAmp = Math.min(0.55, shakeAmp + amount);
-}
-
-// --- per-frame update --------------------------------------------------------------
-function updateOnFoot(dt) {
-  var K = SH.Keys;
-  var moveX = 0, moveZ = 0;
-  // camera-relative WASD
-  var sin = Math.sin(camYaw), cos = Math.cos(camYaw);
-  if (K['KeyW']) { moveX += -sin; moveZ += -cos; }
-  if (K['KeyS']) { moveX += sin; moveZ += cos; }
-  if (K['KeyA']) { moveX += -cos; moveZ += sin; }
-  if (K['KeyD']) { moveX += cos; moveZ += -sin; }
-  var moving = (moveX !== 0 || moveZ !== 0);
-  var sprint = K['ShiftLeft'] || K['ShiftRight'];
-  var speed = sprint ? C.tuning.playerSprint : C.tuning.playerWalk;
-
-  if (moving) {
-    var len = Math.sqrt(moveX * moveX + moveZ * moveZ);
-    moveX /= len; moveZ /= len;
-    var want = U.bearing(moveX, moveZ);
-    P.heading = U.lerpAngle(P.heading, want, Math.min(1, dt * 11));
-    var nx = P.pos.x + moveX * speed * dt;
-    var nz = P.pos.z + moveZ * speed * dt;
-    var res = SH.City.collide(nx, nz, 0.42);
-    P.pos.x = res.x; P.pos.z = res.z;
-    phase += dt * speed * 2.1;
-    SH.People.animateLimbs(mesh, phase, sprint ? 0.95 : 0.6);
-    stepTimer -= dt;
-    if (stepTimer <= 0 && grounded) { stepTimer = sprint ? 0.3 : 0.42; SH.Audio.step(); }
-    // camera drifts to behind the hero while moving
-    camYaw = U.lerpAngle(camYaw, P.heading + Math.PI, Math.min(1, dt * 1.6));
-  } else {
-    SH.People.animateLimbs(mesh, phase, 0.04);
-  }
-
-  // manual camera orbit
-  if (K['ArrowLeft']) camYaw += dt * 1.9;
-  if (K['ArrowRight']) camYaw -= dt * 1.9;
-  if (K['ArrowUp']) camPitch = U.clamp(camPitch - dt * 0.8, 0.08, 0.9);
-  if (K['ArrowDown']) camPitch = U.clamp(camPitch + dt * 0.8, 0.08, 0.9);
-
-  // jump
-  if (SH.KeysPressed['Space'] && grounded) { vy = 4.6; grounded = false; }
-  if (!grounded) {
-    vy -= 12.5 * dt;
-    P.pos.y += vy * dt;
-    if (P.pos.y <= 0) { P.pos.y = 0; grounded = true; vy = 0; }
-  }
-  mesh.rotation.y = P.heading;
-
-  // interact prompt — Round 11: a nearby job board outranks the car prompt
-  // only in wording; E still enters the car, J takes the job.
-  promptCar = nearestStealable();
-  var prompt = promptCar ? 'E — Enter ' + (promptCar.type === 'taxi' ? 'Taxi' : 'Vehicle') : null;
-  if (SH.Jobs && SH.Jobs.nearBoard) {
-    var nb = SH.Jobs.nearBoard();
-    if (nb) prompt = (prompt ? prompt + '   ·   ' : '') + 'J — Take a job (' + nb.label + ')';
-  }
-  if (SH.HUD) SH.HUD.setPrompt(prompt);
-  if (SH.KeysPressed['KeyE'] && promptCar) enterCar(promptCar);
-  if (SH.KeysPressed['KeyF']) shoot();
-
-  // camera: smooth chase behind the hero
-  var dist = 6.4;
-  var cx = P.pos.x + Math.sin(camYaw) * Math.cos(camPitch) * dist;
-  var cz = P.pos.z + Math.cos(camYaw) * Math.cos(camPitch) * dist;
-  var cy = P.pos.y + 1.7 + Math.sin(camPitch) * dist;
-  var cam = SH.camera;
-  cam.position.x = U.lerp(cam.position.x, cx, Math.min(1, dt * 7));
-  cam.position.y = U.lerp(cam.position.y, cy, Math.min(1, dt * 7));
-  cam.position.z = U.lerp(cam.position.z, cz, Math.min(1, dt * 7));
-  cam.lookAt(P.pos.x, P.pos.y + 1.55, P.pos.z);
-  applyShake(dt);
-}
-
-function updateDriving(dt) {
-  var K = SH.Keys;
-  var car = P.car;
-  if (!car) return;
-  var control = { throttle: 0, steer: 0 };
-  if (K['KeyW'] || K['ArrowUp']) control.throttle = 1;
-  if (K['KeyS'] || K['ArrowDown']) control.throttle = -1;
-  if (K['KeyA'] || K['ArrowLeft']) control.steer = 1;
-  if (K['KeyD'] || K['ArrowRight']) control.steer = -1;
-  SH.Vehicles.stepPlayerCar(car, dt, control);
-  P.pos.copy(car.mesh.position);
-  P.heading = car.heading;
-  if (SH.HUD) SH.HUD.setPrompt(Math.abs(car.speed) < 1.2 ? 'E — Exit vehicle' : null);
-  if (SH.KeysPressed['KeyE'] && Math.abs(car.speed) < 2.5) exitCar();
-
-  // Round 11: forward road speed too, for the audio hum layer
-  SH.Audio.setEngine(U.clamp(Math.abs(car.speed) / car.maxSpeed, 0.08, 1), Math.abs(car.speed) * 3.6);
-
-  // camera chases the car's tail, widening with speed
-  var back = 8.6 + Math.abs(car.speed) * 0.22;
-  var tx = car.mesh.position.x - U.fwdX(car.heading) * back;
-  var tz = car.mesh.position.z - U.fwdZ(car.heading) * back;
-  var ty = 3.1 + Math.abs(car.speed) * 0.03;
-  var cam = SH.camera;
-  var k = Math.min(1, dt * 4.2);
-  cam.position.x = U.lerp(cam.position.x, tx, k);
-  cam.position.y = U.lerp(cam.position.y, ty, Math.min(1, dt * 3));
-  cam.position.z = U.lerp(cam.position.z, tz, k);
-  cam.lookAt(
-    car.mesh.position.x + U.fwdX(car.heading) * 6,
-    1.2,
-    car.mesh.position.z + U.fwdZ(car.heading) * 6
-  );
-  camYaw = car.heading + Math.PI;
-  applyShake(dt);
-}
-
-P.damage = function (amount, cause) {
-  if (!P.alive || amount <= 0) return;
-  P.health -= amount;
-  lastDamageT = SH.G.time;
-  // Round 11 feedback: flash + shake, scaled so chip damage stays subtle
-  if (SH.HUD && SH.HUD.hurtFlash) SH.HUD.hurtFlash(U.clamp(amount / 26, 0.25, 1));
-  addShake(U.clamp(amount * 0.016, 0.06, 0.4));
-  if (P.health <= 0) {
-    P.health = 0;
-    P.alive = false;
-    if (SH.Main) SH.Main.gameOver('wasted');
-  }
-};
-
-P.onCarCrash = function (strength) {
-  // hard hits in a car rattle the driver a little
-  if (strength > 9) P.damage((strength - 9) * 0.55, 'crash');
-  else if (strength > 5.5) addShake(0.12); // a thump you feel but don't pay for
-  if (P.car && P.car.damage > 92) P.damage(1.2, 'wreck');
-};
-
-P.heal = function () {
-  P.health = C.tuning.playerHealth;
-  P.alive = true;
-};
-
-P.respawn = function (x, z) {
-  if (P.inCar) { P.car.mode = 'off'; P.car.isPlayerCar = false; P.inCar = false; P.car = null; }
-  mesh.visible = true;
-  P.pos.set(x, 0, z);
-  shakeAmp = 0;
-  P.heal();
-};
-
-P.update = function (dt) {
-  shotCooldown = Math.max(0, shotCooldown - dt);
-  if (flashT > 0) { flashT -= dt; if (flashT <= 0) flashMesh.visible = false; }
-  // slow regen once out of danger
-  if (P.alive && P.health > 0 && P.health < C.tuning.playerHealth && SH.G.time - lastDamageT > 8) {
-    P.health = Math.min(C.tuning.playerHealth, P.health + dt * 5);
-  }
-  if (!P.alive) return;
-  if (P.inCar) updateDriving(dt);
-  else updateOnFoot(dt);
-};
-
-// Camera snap used by shots and respawns.
-P.placeCamera = function (x, y, z, lx, ly, lz) {
-  SH.camera.position.set(x, y, z);
-  SH.camera.lookAt(lx, ly, lz);
-};
-
-P.build = build;
-P.enterCar = enterCar;
-P.exitCar = exitCar;
-P.shoot = shoot;
-Object.defineProperty(P, 'speed', {
-  get: function () { return P.inCar && P.car ? P.car.speed : 0; }
-});
-
-SH.Player = P;
-})();
+    var sw = moving ? Math.sin(Pl.phase) * 0.6 : 0;
+    if (Pl.legL) { Pl.legL.rotation.x = sw; Pl.legR.rotation.x = -sw; Pl.armL.rotation.x = -sw * 0.8; Pl.armR.rotation.x = sw * 0.8; }
+    if (Pl.mesh) {
+      Pl.mesh.position.set(Pl.x, Pl.swim ? -0.55 : 0, Pl.z);
+      Pl.mesh.rotation.y = Pl.heading;
+      Pl.gun.visible = !!input.aim;
+    }
+  };
+  Pl.attack = function (aimHeading) {
+    if (Pl.car || Pl.attackCd > 0) return;
+    Pl.attackCd = 0.32;
+    var px = Pl.x + Math.sin(aimHeading) * 1.6, pz = Pl.z + Math.cos(aimHeading) * 1.6;
+    var ped = SH.People.nearest(px, pz, C.PLAYER.meleeRange);
+    if (ped && ped.health > 0) {
+      ped.health -= C.PLAYER.meleeDamage; ped.flee = 3;
+      if (SH.Audio) SH.Audio.hit();
+      if (SH.Police) SH.Police.reportCrime('assault', Pl.x, Pl.z, 0.8);
+      return;
+    }
+    if (SH.Audio) SH.Audio.hit();
+  };
+  Pl.shoot = function (aimHeading) {
+    if (Pl.car || Pl.attackCd > 0 || Pl.ammo <= 0) { if (Pl.ammo <= 0 && SH.HUD) SH.HUD.centerMsg('Out of ammo - visit the shop', 1.4); return; }
+    Pl.attackCd = 0.24; Pl.ammo--;
+    if (SH.Audio) SH.Audio.shot();
+    var px = Pl.x + Math.sin(aimHeading) * 14, pz = Pl.z + Math.cos(aimHeading) * 14;
+    var ped = SH.People.nearest(px, pz, 5);
+    if (ped && ped.health > 0) { ped.health -= C.PLAYER.pistolDamage; ped.flee = 4; }
+    var car = SH.Vehicles.nearestCar(px, pz, 5);
+    if (car) SH.Vehicles.damageCar(car, 12);
+    if (SH.Police) SH.Police.reportCrime('shots', Pl.x, Pl.z, 1);
+    if (SH.People) SH.People.peds.forEach(function (p) { if (U.dist2d(p.x, p.z, Pl.x, Pl.z) < 18) p.flee = 3; });
+  };
+  Pl.respawn = function () {
+    Pl.health = 100; Pl.car = null;
+    Pl.x = SH.City.anchors.hospital.x + 14; Pl.z = SH.City.anchors.hospital.z;
+    if (Pl.mesh) { Pl.mesh.visible = true; Pl.mesh.position.set(Pl.x, 0, Pl.z); }
+  };
+})(window.SH);

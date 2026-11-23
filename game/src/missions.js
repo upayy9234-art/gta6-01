@@ -1,623 +1,179 @@
-// ============================================================================
-// SOLSTICE HEAT — missions.js
-// Marisol Vega's story chain plus the repeatable taxi side job. A glowing
-// light-pillar marker shows the current objective; each mission is a small
-// state machine (goto / deliver / chase / collect / escape / finale, and
-// Round 11's jobs + crown) checked every frame against the player's
-// position, car and wanted level. Progress (mission index, money, taxi
-// unlock) is saved by main.js.
-// Round 11: the chain grows to eight missions — Night Ledger sends the
-// player out to work the new side-job boards, and Solstice Crown is a
-// five-star, against-the-clock finale at The Gilded Palm. Every payout now
-// flows through economy.js (reputation bonus + automatic banking) and ends
-// with an itemised reward summary on the HUD.
-// ============================================================================
-(function () {
-'use strict';
+// Solstice Heat - story missions: a 10-mission chain for Marisol Vega,
+// plus a 3-step guided onboarding. Objectives: go-to, chase, deliver,
+// escort, survive. Light-pillar markers, dialogue, timers, checkpoints.
 window.SH = window.SH || {};
+(function (SH) {
+  'use strict';
+  var U = SH.U, C = SH.Config;
+  var M = { active: null, idx: -1, step: 0, timer: 0, marker: null, onboard: 0, chaseCar: null };
+  SH.Missions = M;
+  var A = null; // anchors, set at init
 
-var C = SH.Config;
-var U = SH.U;
+  M.DEFS = [
+    { title: 'Welcome to the Bay', giver: 'Marisol Vega', reward: 150, xp: 25, time: 0,
+      dialog: [['Marisol', 'You must be the new driver everyone keeps almost hiring.'], ['You', 'I prefer fixer.'], ['Marisol', 'Fixers deliver. Take my convertible and bring it back in one piece.']],
+      steps: [{ kind: 'goto', x: 88, z: 84, label: 'Reach the Downtown drop' }, { kind: 'goto', x: 92, z: -8, label: 'Return to Marisol' }] },
+    { title: 'Cafecito Run', giver: 'Marisol Vega', reward: 180, xp: 30, time: 150,
+      dialog: [['Marisol', 'The Deco Diner crew runs on cafecito. Move fast, keep it hot.']],
+      steps: [{ kind: 'goto', x: -92, z: 12, label: 'Pick up at the diner' }, { kind: 'goto', x: 252, z: -168, label: 'Deliver to the Marina', timer: true }] },
+    { title: 'Paper Trail', giver: 'Marisol Vega', reward: 220, xp: 35, time: 0,
+      dialog: [['Marisol', 'A courier dropped a ledger in Old Town. Retrieve it before the tide of gossip does.']],
+      steps: [{ kind: 'goto', x: -248, z: 168, label: 'Find the ledger in Old Town' }, { kind: 'goto', x: 92, z: -8, label: 'Bring the ledger back' }] },
+    { title: 'Tail the Accountant', giver: 'Marisol Vega', reward: 300, xp: 45, time: 210,
+      dialog: [['Marisol', 'Follow my accountant. Close enough to learn, far enough to stay a rumour.']],
+      steps: [{ kind: 'chase', x: -88, z: -88, label: 'Tail the accountant across Downtown' }, { kind: 'goto', x: 92, z: -8, label: 'Report back to Marisol' }] },
+    { title: 'Pier Pressure', giver: 'Marisol Vega', reward: 340, xp: 50, time: 200,
+      dialog: [['Marisol', 'A crate lands at Portside tonight. Escort it to the Marina Pier.']],
+      steps: [{ kind: 'goto', x: -328, z: -248, label: 'Collect the crate at Portside' }, { kind: 'goto', x: 470, z: -260, label: 'Escort the crate to Marina Pier' }] },
+    { title: 'Neon Debts', giver: 'Marisol Vega', reward: 420, xp: 60, time: 0,
+      dialog: [['Marisol', 'Three debtors on the Neon Mile. Visit each. Be persuasive, not loud.']],
+      steps: [{ kind: 'goto', x: -8, z: 168, label: 'Debtor one: Neon Mile club' }, { kind: 'goto', x: 72, z: 248, label: 'Debtor two: arcade' }, { kind: 'goto', x: -88, z: 328, label: 'Debtor three: rooftop bar' }] },
+    { title: 'Heat Wave', giver: 'Marisol Vega', reward: 500, xp: 70, time: 120,
+      dialog: [['Marisol', 'The SBPD wants a word about everything. Survive their attention, then come home.']],
+      steps: [{ kind: 'survive', dur: 45, label: 'Survive the heat (45s)' }, { kind: 'goto', x: 92, z: -8, label: 'Lay low at Marisol HQ' }] },
+    { title: 'The Hills Have Eyes', giver: 'Marisol Vega', reward: 560, xp: 80, time: 240,
+      dialog: [['Marisol', 'A client in The Hills needs a quiet pickup. No dents, no headlines.']],
+      steps: [{ kind: 'goto', x: 168, z: 328, label: 'Pick up the client in The Hills' }, { kind: 'goto', x: -168, z: -168, label: 'Drop the client Downtown' }] },
+    { title: 'Storm Cargo', giver: 'Marisol Vega', reward: 700, xp: 95, time: 260,
+      dialog: [['Marisol', 'Storm rolling in, cargo rolling out. Portside to Boardwalk, whatever the sky does.']],
+      steps: [{ kind: 'goto', x: -248, z: -328, label: 'Load cargo at the Portside cranes' }, { kind: 'goto', x: 328, z: 88, label: 'Deliver to the Boardwalk depot' }] },
+    { title: 'The Crown Case', giver: 'Marisol Vega', reward: 1200, xp: 160, time: 300,
+      dialog: [['Marisol', 'Last job, legend. The crown case goes to the end of Marina Pier at golden hour.'], ['You', 'And if the whole bay watches?'], ['Marisol', 'Then give them a show worth the sunset.']],
+      steps: [{ kind: 'goto', x: 92, z: -8, label: 'Collect the crown case' }, { kind: 'goto', x: 535, z: -260, label: 'Deliver the crown case to Marina Pier' }] }
+  ];
 
-var marker = null;         // THREE.Group light pillar
-var markerMat = null;
-var markerRing = null;
-var state = {
-  index: 0,                // next mission to run (== missions.length when story done)
-  active: null,            // runtime copy of the current mission
-  phase: 'idle',           // per-type phase
-  timer: -1,               // countdown when >= 0
-  casesGot: 0,
-  caseIdx: 0,
-  targetCar: null,
-  targetHits: 0,
-  deliverCar: null,
-  jobsBase: 0,             // Round 11: Economy jobsDone when Night Ledger began
-  taxiUnlocked: false,
-  storyDone: false,
-  taxi: null               // {stage, ped, destName, dest, startT, startPos}
-};
-
-function buildMarker() {
-  marker = new THREE.Group();
-  markerMat = new THREE.MeshBasicMaterial({
-    color: 0xffd94d, transparent: true, opacity: 0.32,
-    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
-  });
-  var pillar = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.6, 26, 14, 1, true), markerMat);
-  pillar.position.y = 13;
-  marker.add(pillar);
-  var ringMat = new THREE.MeshBasicMaterial({
-    color: 0xffd94d, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false
-  });
-  markerRing = new THREE.Mesh(new THREE.RingGeometry(1.9, 2.5, 28), ringMat);
-  markerRing.rotation.x = -Math.PI / 2;
-  markerRing.position.y = 0.12;
-  marker.add(markerRing);
-  marker.visible = false;
-  SH.scene.add(marker);
-}
-
-function setMarker(x, z, colorHex) {
-  if (!marker) buildMarker();
-  marker.position.set(x, 0, z);
-  markerMat.color.setHex(colorHex);
-  markerRing.material.color.setHex(colorHex);
-  marker.visible = true;
-}
-function hideMarker() { if (marker) marker.visible = false; }
-
-function locOf(key) { return C.locations[key]; }
-
-function playerDistTo(x, z) {
-  var p = SH.Player.inCar && SH.Player.car ? SH.Player.car.mesh.position : SH.Player.pos;
-  return U.dist(p.x, p.z, x, z);
-}
-
-function toastLines(lines, done) {
-  if (SH.HUD) SH.HUD.toastQueue(lines, done);
-}
-
-function startMission(i) {
-  var def = C.missions[i];
-  if (!def) { state.storyDone = true; state.active = null; hideMarker(); return; }
-  var m = {
-    def: def, type: def.type, title: def.title, payout: def.payout,
-    objective: def.objective
+  M.init = function (scene) {
+    A = SH.City.anchors;
+    var geo = new THREE.CylinderGeometry(2.2, 2.2, 42, 12, 1, true);
+    var mat = new THREE.MeshBasicMaterial({ color: 0xffe14d, transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false });
+    M.marker = new THREE.Mesh(geo, mat); M.marker.visible = false; M.marker.position.y = 21;
+    scene.add(M.marker);
+    M.scene = scene;
   };
-  state.active = m;
-  state.phase = 'main';
-  state.timer = -1;
-  state.casesGot = 0;
-  state.caseIdx = 0;
-  state.targetHits = 0;
-  state.targetCar = null;
-  state.deliverCar = null;
-  toastLines(def.intro);
-  if (SH.HUD) SH.HUD.message(def.title, 'Marisol Vega', 2600);
-
-  if (def.type === 'goto') {
-    var t = locOf(def.target);
-    setMarker(t.x, t.z, 0xffd94d);
-  } else if (def.type === 'deliver') {
-    // the gold sedan waits near the diner, parked at the curb
-    var car = SH.Vehicles.spawn({
-      type: 'sedan', color: 0xd4af37, x: -110.6, z: 52, heading: Math.PI, mode: 'parked'
-    });
-    state.deliverCar = car;
-    setMarker(car.mesh.position.x, car.mesh.position.z, 0xffd94d);
-    m.objective = 'Take the gold sedan near Starfish Diner';
-  } else if (def.type === 'chase') {
-    var target = SH.Vehicles.spawn({
-      type: 'convertible', color: 0xc0272d, x: 116, z: -52, heading: 0, mode: 'target',
-      maxSpeed: 16, cruise: 12
-    });
-    SH.Vehicles.planRoute(target, SH.rng);
-    state.targetCar = target;
-    setMarker(target.mesh.position.x, target.mesh.position.z, 0xff5e5e);
-    m.objective = 'Stop the red coupe (ram it 3 times)';
-  } else if (def.type === 'collect') {
-    var s = C.caseSpots[0];
-    setMarker(s.x, s.z, 0xffd94d);
-  } else if (def.type === 'escape') {
-    SH.Police.setWanted(3);
-    SH.Police.deploy(3);
-    hideMarker();
-  } else if (def.type === 'finale') {
-    var b = locOf('bank');
-    setMarker(b.x, b.z, 0xffd94d);
-    state.phase = 'pickup';
-  } else if (def.type === 'jobs') {
-    // Round 11: snapshot the lifetime job count; the mission completes
-    // when jobsNeeded fresh completions land on top of it.
-    state.jobsBase = SH.Economy ? SH.Economy.stats.jobsDone : 0;
-    hideMarker();
-    m.objective = 'Complete side jobs (0/' + def.jobsNeeded + ') — press J at a job board';
-    // point the player at the closest board so the new system is findable
-    if (SH.Jobs && SH.Jobs.boardPositions) {
-      var boards = SH.Jobs.boardPositions();
-      var bp2 = SH.Player.pos, bestB = null, bestBD = 1e18;
-      for (var bi = 0; bi < boards.length; bi++) {
-        var bd2 = U.dist2(bp2.x, bp2.z, boards[bi].x, boards[bi].z);
-        if (bd2 < bestBD) { bestBD = bd2; bestB = boards[bi]; }
-      }
-      if (bestB) setTimeout(function () {
-        if (SH.HUD) SH.HUD.toastQueue(['Marisol: Nearest board: ' + bestB.label + ' — green square on your minimap. Go earn.']);
-      }, 5200);
-    }
-  } else if (def.type === 'crown') {
-    var g = locOf('gilded');
-    setMarker(g.x, g.z, 0xffd94d);
-    state.phase = 'pickup';
-  }
-  refreshObjective();
-}
-
-function refreshObjective() {
-  if (!SH.HUD) return;
-  var m = state.active;
-  if (!m) {
-    SH.HUD.setObjective(state.storyDone
-      ? 'Free roam — T for taxi work, J at a green board for side jobs'
-      : '', -1);
-    return;
-  }
-  var text = m.objective;
-  var d = -1;
-  if (marker && marker.visible) d = playerDistTo(marker.position.x, marker.position.z);
-  SH.HUD.setObjective(text, d);
-}
-
-function completeMission() {
-  var m = state.active;
-  if (!m) return;
-  // Round 11: one payout pipeline for story money — reputation bonus and
-  // the automatic bank split included, then an itemised summary panel.
-  var res = SH.Economy
-    ? SH.Economy.pay(m.payout, { xp: C.economy.xpPerMission, why: 'mission' })
-    : { cash: m.payout, banked: 0, bonus: 0, total: m.payout };
-  if (SH.Economy) SH.Economy.countMission();
-  SH.Audio.complete();
-  SH.Audio.cash();
-  if (SH.HUD) {
-    SH.HUD.message('MISSION COMPLETE', m.def.title + '  ·  +' + U.fmtMoney(res.cash), 3200);
-    if (SH.HUD.showReward) {
-      var rows = [
-        ['Mission payout', U.fmtMoney(m.payout)],
-        ['Reputation bonus', '+' + U.fmtMoney(res.bonus)],
-        ['Banked (15%)', U.fmtMoney(res.banked)],
-        ['Cash in hand', U.fmtMoney(res.cash)]
-      ];
-      var nextDef = C.missions[state.index + 1];
-      rows.push(['Next up', nextDef ? nextDef.title : 'The bay is yours — free roam']);
-      SH.HUD.showReward(m.def.title + ' — reward summary', rows);
-    }
-    SH.HUD.toastQueue([m.def.from + ': Clean work. ' + U.fmtMoney(res.cash) + ' in hand, ' +
-      U.fmtMoney(res.banked) + ' banked. Stay shiny, partner.']);
-  }
-  if (m.def.id === 'hotwheels' && !state.taxiUnlocked) {
-    state.taxiUnlocked = true;
-    setTimeout(function () {
-      if (SH.HUD) SH.HUD.toastQueue(['Marisol: Word travels. Taxi dispatch will ping you now — press T behind any wheel for fares.']);
-    }, 3600);
-  }
-  state.index++;
-  state.active = null;
-  hideMarker();
-  if (SH.Save) SH.Save.save();
-  // a beat of free roam, then Marisol calls again
-  setTimeout(function () {
-    if (SH.G.mode === 'playing' && !state.active && state.index < C.missions.length) {
-      startMission(state.index);
-    } else if (state.index >= C.missions.length) {
-      state.storyDone = true;
-      if (SH.HUD) SH.HUD.toastQueue(['Marisol: That is the whole board, partner. Solstice Bay is ours. The streets stay open — taxi work and job boards pay forever.']);
-      if (SH.Save) SH.Save.save();
-    }
-  }, 5000);
-}
-
-function failMission(reason) {
-  var m = state.active;
-  if (!m) return;
-  SH.Audio.fail();
-  if (SH.HUD) SH.HUD.message('MISSION FAILED', reason, 2800);
-  // clean up mission props, then restart the same mission shortly
-  if (state.deliverCar && !state.deliverCar.isPlayerCar) SH.Vehicles.remove(state.deliverCar);
-  if (state.targetCar) SH.Vehicles.remove(state.targetCar);
-  state.active = null;
-  state.deliverCar = null;
-  state.targetCar = null;
-  state.timer = -1;
-  if (SH.HUD) SH.HUD.setTimer(-1);
-  hideMarker();
-  var idx = state.index;
-  setTimeout(function () {
-    if (SH.G.mode === 'playing' && !state.active) startMission(idx);
-  }, 3500);
-}
-
-// --- per-type mission logic ---------------------------------------------------------
-function updateGoto(dt) {
-  var m = state.active;
-  var t = locOf(m.def.target);
-  if (playerDistTo(t.x, t.z) < 6.5) completeMission();
-}
-
-function updateDeliver(dt) {
-  var m = state.active;
-  var car = state.deliverCar;
-  if (!car || car.dead) { failMission('The sedan is gone.'); return; }
-  if (state.phase === 'main') {
-    setMarker(car.mesh.position.x, car.mesh.position.z, 0xffd94d);
-    if (SH.Player.inCar && SH.Player.car === car) {
-      state.phase = 'drive';
-      state.timer = m.def.time;
-      var g = locOf('garage');
-      setMarker(g.x, g.z, 0xffd94d);
-      m.objective = 'Deliver the sedan to Solstice Motors';
-      if (SH.HUD) SH.HUD.toastQueue(['Marisol: Clock is running. Solstice Motors, south side. Go.']);
-    }
-  } else if (state.phase === 'drive') {
-    state.timer -= dt;
-    if (SH.HUD) SH.HUD.setTimer(state.timer);
-    if (state.timer <= 0) { failMission('Out of time — the buyer walked.'); return; }
-    if (car.damage > 96) { failMission('The sedan is wrecked.'); return; }
-    var g2 = locOf('garage');
-    if (SH.Player.inCar && SH.Player.car === car && playerDistTo(g2.x, g2.z) < 7.5) {
-      state.timer = -1;
-      if (SH.HUD) SH.HUD.setTimer(-1);
-      // hand the car over: it becomes the garage's problem now
-      SH.Player.exitCar();
-      car.mode = 'parked';
-      completeMission();
-    }
-  }
-  refreshObjective();
-}
-
-function updateChase(dt) {
-  var target = state.targetCar;
-  if (!target || target.dead) { failMission('The coupe vanished.'); return; }
-  if (target.mode === 'target') {
-    setMarker(target.mesh.position.x, target.mesh.position.z, 0xff5e5e);
-    // flee bias: re-plan routes away from the player every few seconds
-    target.fleeT = (target.fleeT || 0) - dt;
-    if (target.fleeT <= 0) {
-      target.fleeT = 3;
-      var pp = SH.Player.pos;
-      if (U.dist(pp.x, pp.z, target.mesh.position.x, target.mesh.position.z) < 55) {
-        target.nav.length = 0; // trafficControl re-plans; speed keeps it ahead
-      }
-    }
-    if (state.targetHits >= 3) {
-      target.mode = 'off';
-      // the courier bails and runs
-      var ped = SH.People.nearestPed(target.mesh.position.x, target.mesh.position.z, 30, true);
-      if (ped) {
-        ped.state = 'flee'; ped.fleeT = 5;
-        ped.threat = { x: target.mesh.position.x, z: target.mesh.position.z };
-      }
-      if (SH.HUD) SH.HUD.toastQueue(['Marisol: He is stopped! Get over there and make it official.']);
-      state.active.objective = 'Reach the stopped coupe';
-    }
-  } else if (target.mode === 'off') {
-    setMarker(target.mesh.position.x, target.mesh.position.z, 0xffd94d);
-    if (playerDistTo(target.mesh.position.x, target.mesh.position.z) < 8) {
-      completeMission();
-    }
-  }
-  refreshObjective();
-}
-
-function updateCollect(dt) {
-  var spot = C.caseSpots[state.caseIdx];
-  if (!spot) { completeMission(); return; }
-  setMarker(spot.x, spot.z, 0xffd94d);
-  if (playerDistTo(spot.x, spot.z) < 4.2) {
-    state.casesGot++;
-    state.caseIdx++;
-    SH.Audio.pickup();
-    SH.Audio.cash();
-    if (SH.Economy) SH.Economy.addCash(150); else SH.G.money += 150;
-    if (SH.HUD) SH.HUD.message('CASE ' + state.casesGot + '/3', '+$150 walking-around money', 1500);
-    state.active.objective = 'Collect the cash cases (' + state.casesGot + '/3)';
-    if (state.caseIdx >= C.caseSpots.length) { completeMission(); return; }
-  }
-  refreshObjective();
-}
-
-function updateEscape(dt) {
-  // completion is driven by Police.onWantedCleared; here we just narrate
-  refreshObjective();
-}
-
-// Round 11: Night Ledger — the story leans on the job system. Progress is
-// the delta in lifetime jobs completed since the mission began.
-function updateJobs(dt) {
-  var m = state.active;
-  var done = SH.Economy ? (SH.Economy.stats.jobsDone - state.jobsBase) : 0;
-  done = Math.max(0, Math.min(done, m.def.jobsNeeded));
-  m.objective = 'Complete side jobs (' + done + '/' + m.def.jobsNeeded + ') — press J at a job board';
-  if (done >= m.def.jobsNeeded) { completeMission(); return; }
-  refreshObjective();
-}
-
-// Round 11: Solstice Crown — Final Tide's bigger sibling: five stars AND
-// a hard clock on the delivery leg.
-function updateCrown(dt) {
-  var m = state.active;
-  if (state.phase === 'pickup') {
-    var g = locOf('gilded');
-    if (playerDistTo(g.x, g.z) < 6.5) {
-      state.phase = 'deliver';
-      state.timer = m.def.time;
-      SH.Police.setWanted(5);
-      SH.Police.deploy(5);
-      var mk = locOf('marina');
-      setMarker(mk.x, mk.z, 0xffd94d);
-      m.objective = 'Deliver the crown case to Marina Pier — five stars, one clock';
-      if (SH.HUD) SH.HUD.toastQueue(['Marisol: The crown is in hand and the whole bay just stood up. Marina Pier. DRIVE.']);
-    }
-  } else if (state.phase === 'deliver') {
-    state.timer -= dt;
-    if (SH.HUD) SH.HUD.setTimer(state.timer);
-    if (state.timer <= 0) {
-      if (SH.HUD) SH.HUD.setTimer(-1);
-      state.timer = -1;
-      SH.Police.clearWanted();
-      failMission('The crown went cold — the buyer vanished.');
-      return;
-    }
-    var t = locOf('marina');
-    if (playerDistTo(t.x, t.z) < 7) {
-      state.timer = -1;
-      if (SH.HUD) SH.HUD.setTimer(-1);
-      SH.Police.clearWanted();
-      completeMission();
-    }
-  }
-  refreshObjective();
-}
-
-function updateFinale(dt) {
-  var m = state.active;
-  if (state.phase === 'pickup') {
-    var b = locOf('bank');
-    if (playerDistTo(b.x, b.z) < 6.5) {
-      state.phase = 'deliver';
-      SH.Police.setWanted(4);
-      SH.Police.deploy(4);
-      var mk = locOf('marina');
-      setMarker(mk.x, mk.z, 0xffd94d);
-      m.objective = 'Deliver the case to Marina Pier — do not get caught';
-      if (SH.HUD) SH.HUD.toastQueue(['Marisol: Case is in hand and the bay just lit up. Marina Pier. DRIVE.']);
-    }
-  } else if (state.phase === 'deliver') {
-    var t = locOf('marina');
-    if (playerDistTo(t.x, t.z) < 7) {
-      SH.Police.clearWanted();
-      completeMission();
-    }
-  }
-  refreshObjective();
-}
-
-// --- taxi side job ---------------------------------------------------------------------
-function startTaxi() {
-  if (!state.taxiUnlocked) {
-    if (SH.HUD) SH.HUD.toastQueue(['Dispatch: No taxi license on file yet. Marisol can fix that — finish her second job first.']);
-    return;
-  }
-  if (state.taxi) { cancelTaxi('Fare cancelled.'); return; }
-  if (!SH.Player.inCar) {
-    if (SH.HUD) SH.HUD.toastQueue(['Dispatch: You need to be behind a wheel to take fares.']);
-    return;
-  }
-  var r = SH.rng;
-  var spot = SH.City.randomSidewalkPoint(r);
-  var ped = SH.People.nearestPed(spot.x, spot.z, 24, true);
-  if (!ped) ped = SH.People.spawn(spot.x, spot.z);
-  ped.state = 'wait';
-  ped.target = null;
-  var name = r.pick(C.taxiNames);
-  state.taxi = {
-    stage: 'pickup', ped: ped, name: name,
-    dest: null, destName: '', startT: 0, startPos: null
+  M.availableIdx = function () {
+    for (var i = 0; i < M.DEFS.length; i++) if (SH.Economy.missionsDoneList.indexOf(i) < 0) return i;
+    return -1;
   };
-  setMarker(ped.pos.x, ped.pos.z, 0x5ee8d2);
-  if (SH.HUD) {
-    SH.HUD.setTaxiObjective('Taxi: pick up ' + name);
-    SH.HUD.toastQueue(['Dispatch: Fare waiting — ' + name + ' needs a ride. Follow the cyan pillar.']);
-  }
-}
-
-function cancelTaxi(why) {
-  if (!state.taxi) return;
-  if (state.taxi.ped && state.taxi.ped.state === 'wait') state.taxi.ped.state = 'walk';
-  if (state.taxi.ped && state.taxi.ped.state === 'inCar') {
-    state.taxi.ped.state = 'walk';
-    state.taxi.ped.mesh.visible = true;
-  }
-  state.taxi = null;
-  if (SH.HUD) { SH.HUD.setTaxiObjective(''); SH.HUD.toastQueue(['Dispatch: ' + why]); }
-  if (!state.active) hideMarker();
-  else refreshObjective();
-}
-
-function updateTaxi(dt) {
-  var tx = state.taxi;
-  if (!tx) return;
-  if (!SH.Player.inCar) return; // paused until the player is driving again
-  if (tx.stage === 'pickup') {
-    if (!tx.ped || tx.ped.state === 'down' || tx.ped.state === 'gone') {
-      cancelTaxi('Your fare got spooked and left.');
+  M.startOnboarding = function () {
+    M.onboard = 1;
+    if (SH.HUD) { SH.HUD.tutorial('Welcome to Solstice Bay! Walk with WASD.'); SH.HUD.centerMsg('Onboarding: explore the Boardwalk', 3); }
+  };
+  M.start = function (idx) {
+    if (M.active) return false;
+    var def = M.DEFS[idx]; if (!def) return false;
+    M.active = def; M.idx = idx; M.step = 0; M.timer = def.time || 0;
+    M.surviveLeft = 0;
+    if (SH.HUD) {
+      SH.HUD.showDialog(def.dialog, def.giver);
+      SH.HUD.centerMsg('Mission: ' + def.title, 2.6);
+    }
+    M.placeMarker();
+    if (def.steps[0].kind === 'chase') M.spawnChase();
+    if (def.steps[0].kind === 'survive') M.beginSurvive();
+    return true;
+  };
+  M.spawnChase = function () {
+    var s = M.active.steps[M.step];
+    var car = SH.Vehicles.spawnPoliceCar; // not used; chase target is a civilian build below
+    var meshCar = null;
+    // Build a civilian target car through the vehicles factory path.
+    var scene = M.scene;
+    var target = (function () {
+      var cars = SH.Vehicles.cars;
+      return null;
+    })();
+    // Simpler: reuse traffic spawn by creating a dedicated car via Vehicles internals is not exposed,
+    // so the chase target is represented by a moving marker car mesh built here.
+    var grp = SH.Vehicles.buildCarMesh(SH.Config.CAR_MODELS[2], 0xff9f1c, false, false);
+    grp.position.set(s.x, 0, s.z); scene.add(grp);
+    M.chaseCar = { mesh: grp, x: s.x, z: s.z, heading: 0, speed: 11, wp: 0 };
+    M.chaseWaypoints = [[-88, -88], [72, -88], [72, 72], [-88, 72], [-248, -88]];
+  };
+  M.beginSurvive = function () {
+    M.surviveLeft = M.active.steps[M.step].dur || 45;
+    SH.Police.setStars(3);
+    if (SH.HUD) SH.HUD.radioChatter('Dispatch: heat wave authorised. All units converge.');
+  };
+  M.placeMarker = function () {
+    if (!M.active) { if (M.marker) M.marker.visible = false; return; }
+    var s = M.active.steps[M.step];
+    M.marker.visible = true; M.marker.position.x = s.x; M.marker.position.z = s.z;
+  };
+  M.objective = function () {
+    if (!M.active) return null;
+    var s = M.active.steps[M.step];
+    var p = SH.Player.pos();
+    return { label: s.label, dist: Math.round(U.dist2d(p.x, p.z, s.x, s.z)), timer: (s.timer || M.active.time) ? M.timer : null, x: s.x, z: s.z };
+  };
+  M.fail = function (why) {
+    if (SH.HUD) SH.HUD.centerMsg('Mission failed: ' + why, 2.6);
+    M.cleanup(); M.active = null;
+  };
+  M.cleanup = function () {
+    if (M.chaseCar) { M.scene.remove(M.chaseCar.mesh); M.chaseCar = null; }
+    if (M.marker) M.marker.visible = false;
+  };
+  M.complete = function () {
+    var def = M.active;
+    SH.Economy.addCash(def.reward, def.title); SH.Economy.addXP(def.xp);
+    SH.Economy.stats.missionsDone++; SH.Economy.missionsDoneList.push(M.idx);
+    if (SH.HUD) SH.HUD.centerMsg('Mission complete: ' + def.title, 3);
+    M.cleanup(); M.active = null; M.idx = -1;
+    SH.Economy.save();
+  };
+  M.update = function (dt) {
+    // Onboarding progression.
+    if (M.onboard > 0 && SH.HUD) {
+      var p0 = SH.Player.pos();
+      if (M.onboard === 1 && U.dist2d(p0.x, p0.z, 300, 30) > 12) { /* walking counts */ M.onboard = 2; SH.HUD.tutorial('Press E near any car to get in. Steal something pastel.'); }
+      else if (M.onboard === 2 && SH.Player.car) { M.onboard = 3; SH.HUD.tutorial('Drive to the gold pillar to start work for Marisol Vega.'); }
+      else if (M.onboard === 3 && M.active) { M.onboard = 0; SH.HUD.tutorial(''); }
+    }
+    if (!M.active) {
+      // Offer next mission when the player visits Marisol.
+      var p = SH.Player.pos();
+      var idx = M.availableIdx();
+      if (idx >= 0 && U.dist2d(p.x, p.z, A.marisol.x, A.marisol.z) < 6 && !M._offered) {
+        M._offered = true;
+        if (SH.HUD) SH.HUD.contextPrompt('E - Talk to Marisol Vega (' + M.DEFS[idx].title + ')');
+      } else if (idx < 0 || U.dist2d(p.x, p.z, A.marisol.x, A.marisol.z) >= 6) M._offered = false;
       return;
     }
-    setMarker(tx.ped.pos.x, tx.ped.pos.z, 0x5ee8d2);
-    if (playerDistTo(tx.ped.pos.x, tx.ped.pos.z) < 6 && Math.abs(SH.Player.car.speed) < 1.5) {
-      // passenger climbs in
-      tx.ped.state = 'inCar';
-      tx.ped.mesh.visible = false;
-      SH.Audio.door();
-      var keys = Object.keys(C.locations);
-      var destKey = SH.rng.pick(keys);
-      var dest = C.locations[destKey];
-      tx.dest = dest;
-      tx.destName = dest.label;
-      tx.stage = 'dropoff';
-      tx.startT = SH.G.time;
-      tx.startPos = { x: SH.Player.pos.x, z: SH.Player.pos.z };
-      setMarker(dest.x, dest.z, 0x5ee8d2);
-      if (SH.HUD) SH.HUD.setTaxiObjective('Taxi: take ' + tx.name + ' to ' + dest.label);
+    var def = M.active, s = def.steps[M.step], p = SH.Player.pos();
+    if (def.time) { M.timer -= dt; if (M.timer <= 0) { M.fail('out of time'); return; } }
+    if (s.kind === 'goto') {
+      if (U.dist2d(p.x, p.z, s.x, s.z) < 7) M.advance();
+    } else if (s.kind === 'survive') {
+      M.surviveLeft -= dt;
+      s.label = 'Survive the heat (' + Math.ceil(M.surviveLeft) + 's)';
+      if (M.surviveLeft <= 0) { SH.Police.clear(); M.advance(); }
+    } else if (s.kind === 'chase' && M.chaseCar) {
+      var cc = M.chaseCar, wp = M.chaseWaypoints[cc.wp % M.chaseWaypoints.length];
+      var want = U.headingTo(cc.x, cc.z, wp[0], wp[1]);
+      cc.heading = U.angleLerp(cc.heading, want, U.clamp(dt * 2, 0, 1));
+      cc.x += Math.sin(cc.heading) * cc.speed * dt; cc.z += Math.cos(cc.heading) * cc.speed * dt;
+      if (U.dist2d(cc.x, cc.z, wp[0], wp[1]) < 8) cc.wp++;
+      cc.mesh.position.set(cc.x, 0, cc.z); cc.mesh.rotation.y = cc.heading;
+      var d = U.dist2d(p.x, p.z, cc.x, cc.z);
+      s.x = cc.x; s.z = cc.z; M.marker.position.x = cc.x; M.marker.position.z = cc.z;
+      if (d < 9) { M.tailing = (M.tailing || 0) + dt; s.label = 'Tailing... ' + Math.floor(M.tailing) + '/12s - stay close'; if (M.tailing >= 12) M.advance(); }
+      else if (d > 60) { M.tailing = 0; s.label = 'You lost him - get closer'; }
+      else s.label = 'Tail the accountant - stay within 60m';
     }
-  } else if (tx.stage === 'dropoff') {
-    setMarker(tx.dest.x, tx.dest.z, 0x5ee8d2);
-    if (playerDistTo(tx.dest.x, tx.dest.z) < 7 && Math.abs(SH.Player.car.speed) < 1.5) {
-      var straight = U.dist(tx.startPos.x, tx.startPos.z, tx.dest.x, tx.dest.z);
-      var elapsed = SH.G.time - tx.startT;
-      var fare = Math.round(35 + straight * 0.85);
-      var par = straight * 0.55 + 25;
-      var bonus = elapsed < par ? Math.round((par - elapsed) * 1.2) : 0;
-      // Round 11: fares pay through the economy too (bonus + banking + XP)
-      var res = SH.Economy
-        ? SH.Economy.pay(fare + bonus, { xp: C.economy.xpPerFare, why: 'fare' })
-        : { cash: fare + bonus, total: fare + bonus };
-      if (SH.Economy) SH.Economy.countFare();
-      SH.Audio.cash();
-      SH.Audio.complete();
-      if (SH.HUD) {
-        SH.HUD.message('FARE PAID', U.fmtMoney(fare) + (bonus ? ' + ' + U.fmtMoney(bonus) + ' fast bonus' : '') +
-          ' · ' + U.fmtMoney(res.cash) + ' in hand', 2400);
-        SH.HUD.setTaxiObjective('');
-      }
-      // passenger gets out near the destination
-      if (tx.ped) {
-        tx.ped.state = 'walk';
-        tx.ped.mesh.visible = true;
-        tx.ped.pos.set(tx.dest.x + 2, 0, tx.dest.z + 1);
-        tx.ped.target = null;
-      }
-      state.taxi = null;
-      if (!state.active) hideMarker(); else refreshObjective();
-      if (SH.Save) SH.Save.save();
-    }
-  }
-}
-
-// --- public API -------------------------------------------------------------------------
-SH.Missions = {
-  state: state,
-
-  init: function () {
-    buildMarker();
-    // chase mission: count solid rams by the player's car on the target
-    SH.Vehicles.onHit(function (car, other, strength) {
-      var t = state.targetCar;
-      if (!t || !state.active || state.active.type !== 'chase') return;
-      if (strength < 3.2) return;
-      var involvesTarget = (car === t || other === t);
-      var involvesPlayer = (car && car.isPlayerCar) || (other && other.isPlayerCar);
-      if (involvesTarget && involvesPlayer) {
-        state.targetHits++;
-        t.damage = Math.min(100, t.damage + 26);
-        if (SH.HUD) SH.HUD.message('HIT ' + Math.min(3, state.targetHits) + '/3', 'Keep on him!', 900);
-        SH.Audio.crash(true);
-      }
-    });
-  },
-
-  // Begin the chain at the saved index (called when a run starts).
-  begin: function () {
-    if (state.index >= C.missions.length) {
-      state.storyDone = true;
-      state.active = null;
-      refreshObjective();
-      return;
-    }
-    startMission(state.index);
-  },
-
-  onEnterCar: function (car) { /* deliver/taxi logic polls each frame instead */ },
-  onExitCar: function (car) {
-    if (state.taxi && state.taxi.stage === 'dropoff') {
-      // stepping out mid-fare keeps the fare; getting back in resumes it
-    }
-  },
-
-  onWantedCleared: function () {
-    if (state.active && state.active.type === 'escape') completeMission();
-  },
-
-  // Called when the player is wasted/busted: restart the current mission.
-  onPlayerDown: function () {
-    if (state.taxi) cancelTaxi('Fare lost.');
-    if (SH.Jobs) SH.Jobs.onPlayerDown();
-    if (state.active) {
-      var idx = state.index;
-      if (state.deliverCar && !state.deliverCar.isPlayerCar) SH.Vehicles.remove(state.deliverCar);
-      if (state.targetCar) SH.Vehicles.remove(state.targetCar);
-      state.active = null;
-      state.deliverCar = null;
-      state.targetCar = null;
-      state.timer = -1;
-      if (SH.HUD) SH.HUD.setTimer(-1);
-      hideMarker();
-      setTimeout(function () {
-        if (SH.G.mode === 'playing' && !state.active && !state.storyDone) startMission(idx);
-      }, 2500);
-    }
-  },
-
-  toggleTaxi: function () {
-    if (state.taxi) cancelTaxi('Fare cancelled.');
-    else startTaxi();
-  },
-
-  markerPos: function () {
-    return (marker && marker.visible) ? marker.position : null;
-  },
-  taxiMarkerPos: function () {
-    if (!state.taxi) return null;
-    if (state.taxi.stage === 'pickup' && state.taxi.ped) return state.taxi.ped.pos;
-    if (state.taxi.stage === 'dropoff') return state.taxi.dest;
-    return null;
-  },
-
-  restore: function (data) {
-    if (!data) { state.index = 0; state.taxiUnlocked = false; state.storyDone = false; return; }
-    state.index = U.clamp(data.missionIndex || 0, 0, C.missions.length);
-    state.taxiUnlocked = !!data.taxiUnlocked;
-    state.storyDone = state.index >= C.missions.length;
-  },
-
-  saveData: function () {
-    return {
-      missionIndex: state.index,
-      taxiUnlocked: state.taxiUnlocked,
-      storyDone: state.storyDone
-    };
-  },
-
-  update: function (dt) {
-    // marker idle animation
-    if (marker && marker.visible) {
-      markerRing.rotation.z += dt * 0.8;
-      var s = 1 + Math.sin(SH.G.time * 3.2) * 0.08;
-      markerRing.scale.set(s, s, 1);
-    }
-    var m = state.active;
-    if (m) {
-      if (m.type === 'goto') updateGoto(dt);
-      else if (m.type === 'deliver') updateDeliver(dt);
-      else if (m.type === 'chase') updateChase(dt);
-      else if (m.type === 'collect') updateCollect(dt);
-      else if (m.type === 'escape') updateEscape(dt);
-      else if (m.type === 'finale') updateFinale(dt);
-      else if (m.type === 'jobs') updateJobs(dt);
-      else if (m.type === 'crown') updateCrown(dt);
-    }
-    updateTaxi(dt);
-  }
-};
-})();
+  };
+  M.advance = function () {
+    M.step++; M.tailing = 0;
+    if (M.step >= M.active.steps.length) { M.complete(); return; }
+    var s = M.active.steps[M.step];
+    if (s.kind === 'chase') M.spawnChase();
+    if (s.kind === 'survive') M.beginSurvive();
+    M.placeMarker();
+    if (SH.Audio) SH.Audio.blip();
+  };
+  M.interact = function () {
+    if (M.active) return false;
+    var p = SH.Player.pos(), idx = M.availableIdx();
+    if (idx >= 0 && U.dist2d(p.x, p.z, A.marisol.x, A.marisol.z) < 7) { M.start(idx); return true; }
+    return false;
+  };
+})(window.SH);

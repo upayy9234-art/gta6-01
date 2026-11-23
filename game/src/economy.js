@@ -1,178 +1,65 @@
-// ============================================================================
-// SOLSTICE HEAT — economy.js  (Round 11, NEW)
-// The money-and-reputation layer that sits under missions, taxi fares and
-// side jobs. Cash lives in SH.G.money (the number the HUD has always shown);
-// this module adds the bank account, the five-rung reputation ladder,
-// lifetime run statistics and the payout maths everyone shares, so a job,
-// a fare and a story mission all pay through one honest pipeline:
-//   gross -> reputation bonus -> streak-free split (bank share / cash).
-// Persistence rides inside the existing localStorage save: main.js asks
-// for saveData() when it writes and hands restore() the blob on continue.
-// ============================================================================
-(function () {
-'use strict';
+// Solstice Heat - economy: cash, bank, XP ranks, stats, shop, save/load.
 window.SH = window.SH || {};
-
-var C = SH.Config;
-var E = C.economy;
-var U = SH.U;
-
-var bank = 0;               // savings: grows by bankShare of every payout
-var xp = 0;                 // lifetime reputation XP
-var levelIdx = 0;           // index into E.levels, derived from xp
-var stats = {
-  distanceKm: 0,            // odometer across every car the player drives
-  jobsDone: 0,              // side jobs completed (jobs.js)
-  jobsTaken: 0,
-  faresDone: 0,             // taxi fares completed (missions.js)
-  missionsDone: 0,          // story missions completed
-  topSpeedKmh: 0,           // fastest moment ever, in any car
-  nearMisses: 0,
-  earnedTotal: 0            // gross cash earned across the whole run
-};
-var lastPos = null;         // last frame player position (odometer)
-var levelListeners = [];
-
-function computeLevel() {
-  var idx = 0;
-  for (var i = 0; i < E.levels.length; i++) {
-    if (xp >= E.levels[i].xp) idx = i;
-  }
-  return idx;
-}
-
-function level() { return E.levels[levelIdx]; }
-
-function nextLevel() {
-  return levelIdx + 1 < E.levels.length ? E.levels[levelIdx + 1] : null;
-}
-
-// XP progress 0..1 toward the next rung (1 at the top of the ladder).
-function levelProgress() {
-  var nxt = nextLevel();
-  if (!nxt) return 1;
-  var cur = level().xp;
-  return U.clamp((xp - cur) / (nxt.xp - cur), 0, 1);
-}
-
-// The multiplier every payout passes through: +8% per rung above the first.
-function payoutMultiplier() {
-  return 1 + levelIdx * E.payoutBonusPerLevel;
-}
-
-function addXP(amount, why) {
-  if (!amount || amount <= 0) return;
-  var before = levelIdx;
-  xp += amount;
-  levelIdx = computeLevel();
-  if (levelIdx > before) {
-    // a rung gained: fanfare + a centre-screen moment + let listeners react
-    if (SH.Audio) SH.Audio.levelUp();
-    if (SH.HUD) {
-      SH.HUD.message('REPUTATION UP', 'You are now a ' + level().name +
-        ' — payouts +' + Math.round(levelIdx * E.payoutBonusPerLevel * 100) + '%', 3000);
-    }
-    for (var i = 0; i < levelListeners.length; i++) levelListeners[i](levelIdx, level());
-  }
-}
-
-// Pay the player. Returns the breakdown so callers can show an honest
-// reward summary (gross, bonus, banked, cash). Cash goes to SH.G.money.
-function pay(gross, opts) {
-  opts = opts || {};
-  var mult = payoutMultiplier();
-  var withBonus = Math.round(gross * mult);
-  var bonus = withBonus - Math.round(gross);
-  var banked = Math.round(withBonus * E.bankShare);
-  var cash = withBonus - banked;
-  bank += banked;
-  SH.G.money += cash;
-  stats.earnedTotal += withBonus;
-  if (opts.xp) addXP(opts.xp, opts.why || 'work');
-  if (SH.Save && !opts.noSave) SH.Save.save();
-  return { gross: Math.round(gross), bonus: bonus, banked: banked, cash: cash, total: withBonus };
-}
-
-// Direct cash change that bypasses the payout pipeline (fines, respawn
-// fees, case pickups): still tracked so the stats stay truthful.
-function addCash(amount) {
-  SH.G.money += amount;
-  if (amount > 0) stats.earnedTotal += amount;
-}
-
-function spendCash(amount) {
-  var paid = Math.min(SH.G.money, Math.max(0, amount));
-  SH.G.money -= paid;
-  return paid;
-}
-
-// Per-frame bookkeeping: odometer + top speed, sampled from the player's
-// actual position so it counts in every vehicle and on foot alike.
-function update(dt) {
-  var p = SH.Player ? SH.Player.pos : null;
-  if (!p) return;
-  if (lastPos) {
-    var d = U.dist(lastPos.x, lastPos.z, p.x, p.z);
-    // ignore teleports (respawns, shot setups): a frame never moves 40 m
-    if (d < 40) stats.distanceKm += d / 1000;
-  }
-  lastPos = { x: p.x, z: p.z };
-  if (SH.Player.inCar && SH.Player.car) {
-    var kmh = Math.abs(SH.Player.car.speed) * 3.6;
-    if (kmh > stats.topSpeedKmh) stats.topSpeedKmh = Math.round(kmh);
-  }
-}
-
-SH.Economy = {
-  get bank() { return bank; },
-  get xp() { return xp; },
-  get stats() { return stats; },
-  level: level,
-  levelIndex: function () { return levelIdx; },
-  levelName: function () { return level().name; },
-  nextLevel: nextLevel,
-  levelProgress: levelProgress,
-  payoutMultiplier: payoutMultiplier,
-  pay: pay,
-  addCash: addCash,
-  spendCash: spendCash,
-  addXP: addXP,
-  onLevelUp: function (fn) { levelListeners.push(fn); },
-
-  // Small typed counters so other modules never poke stats directly.
-  countJobTaken: function () { stats.jobsTaken++; },
-  countJobDone: function () { stats.jobsDone++; },
-  countFare: function () { stats.faresDone++; },
-  countMission: function () { stats.missionsDone++; },
-  countNearMiss: function () { stats.nearMisses++; },
-
-  // One-line summary for the title screen and the reward panel.
-  summaryLine: function () {
-    return level().name + ' · ' + U.fmtMoney(SH.G.money) + ' cash · ' +
-      U.fmtMoney(bank) + ' banked · ' + stats.jobsDone + ' jobs · ' +
-      stats.distanceKm.toFixed(1) + ' km driven';
-  },
-
-  restore: function (data) {
-    bank = 0; xp = 0; levelIdx = 0;
-    stats = { distanceKm: 0, jobsDone: 0, jobsTaken: 0, faresDone: 0,
-              missionsDone: 0, topSpeedKmh: 0, nearMisses: 0, earnedTotal: 0 };
-    lastPos = null;
-    if (!data) return;
-    bank = Math.max(0, Math.floor(data.bank || 0));
-    xp = Math.max(0, Math.floor(data.xp || 0));
-    if (data.stats) {
-      for (var k in stats) {
-        if (typeof data.stats[k] === 'number' && isFinite(data.stats[k])) stats[k] = data.stats[k];
-      }
-    }
-    levelIdx = computeLevel();
-  },
-
-  saveData: function () {
-    return { bank: bank, xp: xp, stats: stats };
-  },
-
-  update: update
-};
-})();
+(function (SH) {
+  'use strict';
+  var U = SH.U, C = SH.Config;
+  var E = {
+    cash: 120, bank: 0, xp: 0, upgrades: {}, stats: { earned: 0, spent: 0, jobsDone: 0, racesWon: 0, missionsDone: 0, shells: 0, stunts: 0, postcards: 0, busts: 0, wasted: 0 },
+    shellsFound: [], postcardsFound: [], missionsDoneList: []
+  };
+  SH.Economy = E;
+  E.rankIdx = function () { var r = 0; for (var i = 0; i < C.RANKS.length; i++) if (E.xp >= C.RANKS[i].xp) r = i; return r; };
+  E.rank = function () { return C.RANKS[E.rankIdx()]; };
+  E.nextRank = function () { return C.RANKS[E.rankIdx() + 1] || null; };
+  E.addCash = function (amt, why) {
+    E.cash += amt; E.stats.earned += Math.max(0, amt);
+    // A slice of every payout is banked automatically.
+    if (amt > 100) { var dep = Math.floor(amt * 0.25); E.cash -= dep; E.bank += dep; }
+    if (SH.HUD && amt !== 0) SH.HUD.rewardPopup((amt > 0 ? '+' : '') + U.fmtMoney(amt) + (why ? ' - ' + why : ''));
+    if (SH.Audio && amt > 0) SH.Audio.cash();
+  };
+  E.spend = function (amt) {
+    if (E.cash < amt) { if (SH.HUD) SH.HUD.centerMsg('Not enough cash', 1.4); return false; }
+    E.cash -= amt; E.stats.spent += amt; return true;
+  };
+  E.addXP = function (amt) {
+    var before = E.rankIdx(); E.xp += amt;
+    if (E.rankIdx() > before && SH.HUD) { SH.HUD.centerMsg('Rank up: ' + E.rank().name + '!', 2.6); if (SH.Audio) SH.Audio.collect(); }
+  };
+  E.hasUpgrade = function (id) { return !!E.upgrades[id]; };
+  E.buy = function (item) {
+    if (item.id !== 'medkit' && item.id !== 'ammo' && E.upgrades[item.id]) { if (SH.HUD) SH.HUD.centerMsg('Already owned', 1.3); return false; }
+    if (!E.spend(item.price)) return false;
+    if (item.id === 'medkit') SH.Player.heal(50);
+    else if (item.id === 'ammo') SH.Player.ammo += 12;
+    else if (item.id === 'shirt') SH.Player.setShirt(SH.Player.shirtIdx + 1);
+    else if (item.id === 'paint' && SH.Player.car) { SH.Player.car.mesh.children[0].material = new THREE.MeshLambertMaterial({ color: SH.U ? 0xff2e88 : 0xff2e88 }); }
+    else E.upgrades[item.id] = true;
+    if (SH.HUD) SH.HUD.centerMsg('Bought: ' + item.name, 1.6);
+    return true;
+  };
+  E.save = function () {
+    try {
+      var p = SH.Player.pos();
+      localStorage.setItem(C.SAVE_KEY, JSON.stringify({
+        cash: E.cash, bank: E.bank, xp: E.xp, upgrades: E.upgrades, stats: E.stats,
+        shellsFound: E.shellsFound, postcardsFound: E.postcardsFound, missionsDoneList: E.missionsDoneList,
+        x: p.x, z: p.z, ammo: SH.Player.ammo, shirt: SH.Player.shirtIdx
+      }));
+    } catch (e) { /* private mode */ }
+  };
+  E.load = function () {
+    try {
+      var raw = localStorage.getItem(C.SAVE_KEY); if (!raw) return false;
+      var d = JSON.parse(raw);
+      E.cash = d.cash; E.bank = d.bank; E.xp = d.xp; E.upgrades = d.upgrades || {};
+      E.stats = d.stats || E.stats; E.shellsFound = d.shellsFound || []; E.postcardsFound = d.postcardsFound || [];
+      E.missionsDoneList = d.missionsDoneList || [];
+      if (typeof d.x === 'number') { SH.Player.x = d.x; SH.Player.z = d.z; }
+      if (typeof d.ammo === 'number') SH.Player.ammo = d.ammo;
+      if (typeof d.shirt === 'number') SH.Player.setShirt(d.shirt);
+      return true;
+    } catch (e) { return false; }
+  };
+  E.resetSave = function () { try { localStorage.removeItem(C.SAVE_KEY); } catch (e) {} };
+})(window.SH);

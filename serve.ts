@@ -71,5 +71,5 @@ createServer((request, response) => {
   });
   createReadStream(file).pipe(response);
 }).listen(port, '127.0.0.1', () => {
-  console.log(`Solstice Heat (Round 11) — game/ is on http://localhost:${port}`);
+  console.log(`Solstice Heat (Round 12) — game/ is on http://localhost:${port}`);
 });

@@ -1,455 +1,272 @@
-// ============================================================================
-// SOLSTICE HEAT — main.js
-// Bootstrap and the heartbeat: renderer/scene/camera, the game loop, the
-// state machine (title attract mode → playing → paused / wasted / busted),
-// the slow day cycle anchored on golden hour, keyboard input, and the
-// localStorage save. Everything else lives in the SH.* modules.
-// Round 11: the loop also ticks the economy (odometer / top speed) and the
-// side-job system, the save grows an economy block, J takes jobs at boards,
-// and fresh runs get a guided 90-second onboarding chain of contextual
-// hints (skippable, and skipped automatically for returning saves).
-// ============================================================================
-(function () {
-'use strict';
+// Solstice Heat - bootstrap and game loop.
+// States: menu orbit, play, pause, busted, wasted. Cameras: menu orbit,
+// on-foot follow, chase car with speed FOV. All systems update here.
 window.SH = window.SH || {};
+(function (SH) {
+  'use strict';
+  var U = SH.U, C = SH.Config;
+  var G = { state: 'menu', time: 0, camHeading: 0, keys: {}, mouseDown: false, autosave: 0, started: false };
+  SH.Main = G;
+  // Silent car entry used by screenshot compositions.
+  SH.Player.enterCarSilent = function (car) {
+    SH.Player.car = car; car.isPlayer = true;
+    if (SH.Player.mesh) SH.Player.mesh.visible = false;
+  };
+  G.onBusted = function () {
+    if (G.state !== 'play') return;
+    G.state = 'busted'; SH.Economy.stats.busts++;
+    SH.Economy.cash = Math.max(0, SH.Economy.cash - 150);
+    SH.HUD.showScreen('busted'); SH.Economy.save();
+  };
+  G.onWasted = function () {
+    if (G.state !== 'play') return;
+    G.state = 'wasted'; SH.Economy.stats.wasted++;
+    SH.HUD.showScreen('wasted'); SH.Economy.save();
+  };
+  G.resume = function () {
+    SH.HUD.showScreen(null); G.state = 'play';
+    if (!G.onboarded) { G.onboarded = true; SH.Missions.startOnboarding(); }
+  };
+  G.respawnAfter = function () {
+    SH.Player.respawn(); SH.Police.clear();
+    // Clear police units so the player restarts clean.
+    var scene = G.scene;
+    SH.Police.units.slice().forEach(function (u) { SH.Vehicles.removeCar(scene, u); });
+    SH.Police.units = []; SH.Police.clearBlocks(scene);
+    SH.HUD.showScreen(null); G.state = 'play';
+  };
 
-var C = SH.Config;
-var U = SH.U;
-
-var params = new URLSearchParams(window.location.search);
-var seedParam = parseInt(params.get('seed') || '', 10);
-if (!isNaN(seedParam)) SH.rng = new SH.RNG(seedParam);
-
-// --- global game state ------------------------------------------------------------
-SH.G = {
-  mode: 'boot',           // title | playing | paused | wasted | busted
-  time: 0,
-  money: 0,
-  dayT: C.tuning.dayStart,
-  shotMode: params.get('shot') || null,
-  inputLocked: !!params.get('shot'),
-  started: false
-};
-SH.Keys = {};
-SH.KeysPressed = {};
-
-// --- renderer / scene ----------------------------------------------------------------
-var renderer, scene, camera, sun, hemi, sunTarget;
-var frameCount = 0;
-var shotFrozen = false;
-var attractAngle = 0;
-
-function initGraphics() {
-  renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFShadowMap;
-  renderer.outputEncoding = THREE.sRGBEncoding;
-  document.getElementById('game-root').appendChild(renderer.domElement);
-  SH.renderer = renderer;
-
-  scene = new THREE.Scene();
-  scene.fog = new THREE.Fog(0xf2a56b, 120, 620);
-  SH.scene = scene;
-
-  camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 1600);
-  camera.position.set(60, 30, 120);
-  SH.camera = camera;
-
-  hemi = new THREE.HemisphereLight(0xbdd8ff, 0x8a6a4a, 0.75);
-  scene.add(hemi);
-
-  sun = new THREE.DirectionalLight(0xffd9a8, 1.35);
-  sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
-  sun.shadow.camera.left = -95;
-  sun.shadow.camera.right = 95;
-  sun.shadow.camera.top = 95;
-  sun.shadow.camera.bottom = -95;
-  sun.shadow.camera.near = 10;
-  sun.shadow.camera.far = 520;
-  sun.shadow.bias = -0.0006;
-  sunTarget = new THREE.Object3D();
-  scene.add(sunTarget);
-  sun.target = sunTarget;
-  scene.add(sun);
-  SH.sun = sun;
-
-  window.addEventListener('resize', function () {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
+  function boot() {
+    var seedParam = 7;
+    SH.Shots.parse();
+    seedParam = SH.Shots.seed || 7;
+    var rng = new SH.RNG(seedParam);
+    G.rng = rng;
+    var renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
-  });
-}
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+    document.getElementById('game').appendChild(renderer.domElement);
+    G.renderer = renderer;
+    var scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0xffb36b, 180, 620);
+    G.scene = scene;
+    var camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 1500);
+    G.camera = camera;
+    G.camPos = new THREE.Vector3(280, 26, -60);
+    G.camTarget = new THREE.Vector3(330, 2, 30);
 
-// --- day cycle ---------------------------------------------------------------------------
-// dayT 0..1: 0.0 dawn, 0.25 noon-ish, 0.5 dusk... we anchor play around the
-// golden band by starting at dayStart and moving slowly. Sun elevation is a
-// sine over the cycle; palettes lerp between day / golden / night stops.
-var SKY_STOPS = [
-  // elev, top, mid, bot, fog, sunColor, sunI, hemiI, nightF
-  { e: -0.25, top: 0x060a1c, mid: 0x101a38, bot: 0x1c2440, fog: 0x0d1424, sun: 0x8fb4ff, si: 0.06, hi: 0.22, nf: 1 },
-  { e: 0.0,   top: 0x2c4a7c, mid: 0xd96f3c, bot: 0xffc98a, fog: 0xcf8456, sun: 0xffb37a, si: 0.55, hi: 0.4, nf: 0.55 },
-  { e: 0.14,  top: 0x3a6ea5, mid: 0xff9e5e, bot: 0xffe3b3, fog: 0xf2a56b, sun: 0xffc98a, si: 1.15, hi: 0.62, nf: 0.12 },
-  { e: 0.45,  top: 0x4a90c4, mid: 0xa8cdea, bot: 0xfdeed3, fog: 0xc4d6dd, sun: 0xfff0d0, si: 1.35, hi: 0.78, nf: 0 },
-  { e: 1.0,   top: 0x3f83c2, mid: 0x9fc6e8, bot: 0xfdeed3, fog: 0xc4d6dd, sun: 0xfff3da, si: 1.4, hi: 0.8, nf: 0 }
-];
-var _c1 = new THREE.Color(), _c2 = new THREE.Color();
-function lerpColor(target, a, b, t) {
-  _c1.setHex(a); _c2.setHex(b);
-  target.copy(_c1).lerp(_c2, t);
-}
+    SH.Weather.init(scene, rng);
+    SH.City.build(scene, seedParam);
+    SH.Player.build(scene);
+    SH.Economy.load();
+    if (SH.Player.mesh) SH.Player.mesh.position.set(SH.Player.x, 0, SH.Player.z);
+    SH.Vehicles.spawnParked(scene, rng, 26);
+    SH.Vehicles.spawnTraffic(scene, rng, 16);
+    SH.People.spawn(scene, rng, 34);
+    SH.Police.buildHeli(scene);
+    SH.Missions.init(scene);
+    SH.Jobs.init(scene, rng);
+    SH.Races.init(scene, rng);
+    SH.Activities.init(scene, rng);
+    SH.HUD.init();
+    // A hero convertible waits at spawn.
+    var heroMesh = SH.Vehicles.buildCarMesh(C.CAR_MODELS[0], 0xe63946, false, false);
+    heroMesh.position.set(322, 0, 40); heroMesh.rotation.y = -Math.PI / 2.4; scene.add(heroMesh);
+    var hero = { mesh: heroMesh, model: C.CAR_MODELS[0], x: 322, z: 40, heading: -Math.PI / 2.4, speed: 0, steer: 0, damage: 0, isPlayer: false, color: 0xe63946, parked: true };
+    heroMesh.userData.car = hero; SH.Vehicles.cars.push(hero);
+    G.heroCar = hero;
 
-function applyDayCycle() {
-  var dayT = SH.G.dayT;
-  var ang = dayT * Math.PI * 2;
-  var elev = Math.sin(ang);                       // -1..1
-  var azim = Math.cos(ang);                        // east → west
-  // find palette segment
-  var a = SKY_STOPS[0], b = SKY_STOPS[SKY_STOPS.length - 1];
-  for (var i = 0; i < SKY_STOPS.length - 1; i++) {
-    if (elev >= SKY_STOPS[i].e && elev <= SKY_STOPS[i + 1].e) { a = SKY_STOPS[i]; b = SKY_STOPS[i + 1]; break; }
-  }
-  var span = (b.e - a.e) || 1;
-  var t = U.clamp((elev - a.e) / span, 0, 1);
-
-  var sky = SH.City.skyMat;
-  if (sky) {
-    lerpColor(sky.uniforms.top.value, a.top, b.top, t);
-    lerpColor(sky.uniforms.mid.value, a.mid, b.mid, t);
-    lerpColor(sky.uniforms.bot.value, a.bot, b.bot, t);
-  }
-  lerpColor(scene.fog.color, a.fog, b.fog, t);
-  lerpColor(sun.color, a.sun, b.sun, t);
-  sun.intensity = U.lerp(a.si, b.si, t);
-  hemi.intensity = U.lerp(a.hi, b.hi, t);
-  var nightF = U.lerp(a.nf, b.nf, t);
-  SH.City.setNight(nightF);
-  SH.Vehicles.setNight(nightF);
-
-  // sun position relative to the player so shadows stay local and crisp
-  var focus = SH.Player && SH.Player.pos ? SH.Player.pos : { x: 0, z: 0 };
-  var sunDist = 190;
-  var sx = focus.x + azim * sunDist * 0.7;
-  var sz = focus.z + 60;
-  var sy = Math.max(elev, -0.12) * sunDist;
-  sun.position.set(sx, sy + 24, sz);
-  sunTarget.position.set(focus.x, 0, focus.z);
-  sunTarget.updateMatrixWorld();
-  sun.castShadow = elev > 0.02;
-}
-
-// --- save / load ----------------------------------------------------------------------
-var SAVE_KEY = 'solstice-heat-save-v1';
-SH.Save = {
-  read: function () {
-    try {
-      var raw = window.localStorage.getItem(SAVE_KEY);
-      return raw ? JSON.parse(raw) : null;
-    } catch (e) { return null; }
-  },
-  save: function () {
-    try {
-      var data = SH.Missions.saveData();
-      data.money = SH.G.money;
-      data.playerPos = { x: SH.Player.pos.x, z: SH.Player.pos.z };
-      // Round 11: the economy block (bank, XP, lifetime stats) rides along
-      if (SH.Economy) data.economy = SH.Economy.saveData();
-      data.tutorialDone = tutorial.done;
-      window.localStorage.setItem(SAVE_KEY, JSON.stringify(data));
-    } catch (e) { /* storage unavailable: play on without saving */ }
-  },
-  clear: function () {
-    try { window.localStorage.removeItem(SAVE_KEY); } catch (e) {}
-  }
-};
-
-// --- Round 11: guided onboarding -------------------------------------------------------
-// A five-beat chain for brand-new runs only. Each beat is one contextual
-// line pinned to the HUD; beats complete by *doing*, never by timer, and
-// Backspace skips the whole chain. Returning saves never see it.
-var tutorial = { active: false, step: 0, done: false, startX: 0, startZ: 0 };
-var TUT_STEPS = [
-  { text: 'Welcome to Solstice Bay — walk with WASD (Shift sprints, Space jumps)',
-    done: function () {
-      return U.dist(tutorial.startX, tutorial.startZ, SH.Player.pos.x, SH.Player.pos.z) > 4;
-    } },
-  { text: 'Grab a ride: walk up to any car and press E to get in',
-    done: function () { return SH.Player.inCar; } },
-  { text: 'Follow the gold pillar to Marina Pier — Marisol\'s package is waiting',
-    done: function () {
-      var m = C.locations.marina;
-      return U.dist(m.x, m.z, SH.Player.pos.x, SH.Player.pos.z) < 30 || SH.Missions.state.index >= 1;
-    } },
-  { text: 'Finish the errand at the pier — step into the gold ring',
-    done: function () { return SH.Missions.state.index >= 1; } },
-  { text: 'Side work pays: find a green job board and press J to take a job',
-    done: function () { return SH.Economy && SH.Economy.stats.jobsTaken >= 1; } }
-];
-
-function tutorialStart() {
-  tutorial.active = true;
-  tutorial.step = 0;
-  tutorial.startX = SH.Player.pos.x;
-  tutorial.startZ = SH.Player.pos.z;
-  if (SH.HUD) SH.HUD.setTutorial(TUT_STEPS[0].text + '  ·  Backspace skips the tour');
-}
-function tutorialSkip() {
-  tutorial.active = false;
-  tutorial.done = true;
-  if (SH.HUD) SH.HUD.setTutorial(null);
-}
-function tutorialUpdate() {
-  if (!tutorial.active) return;
-  var step = TUT_STEPS[tutorial.step];
-  if (!step) { tutorialSkip(); return; }
-  if (step.done()) {
-    tutorial.step++;
-    if (tutorial.step >= TUT_STEPS.length) {
-      tutorialSkip();
-      if (SH.HUD) SH.HUD.toastQueue(['Marisol: You know the bay now. The rest is money.']);
-      SH.Save.save();
-    } else if (SH.HUD) {
-      SH.HUD.setTutorial(TUT_STEPS[tutorial.step].text + '  ·  Backspace skips the tour');
-      if (SH.Audio) SH.Audio.pickup();
+    bindInput();
+    bindButtons();
+    if (SH.Shots.isShot()) {
+      SH.Shots.setup(G);
+      G.state = 'play'; G.started = true;
+      SH.HUD.showScreen(null);
+    } else {
+      SH.HUD.showScreen('start');
     }
-  }
-}
-
-// --- state machine ------------------------------------------------------------------------
-function startGame(continueSave) {
-  var save = continueSave ? SH.Save.read() : null;
-  if (!continueSave) SH.Save.clear();
-  if (save) {
-    SH.G.money = save.money || 0;
-    SH.Missions.restore(save);
-    if (SH.Economy) SH.Economy.restore(save.economy || null);
-    if (save.playerPos) SH.Player.pos.set(save.playerPos.x, 0, save.playerPos.z);
-    tutorial.done = !!save.tutorialDone;
-    tutorial.active = false;
-    if (SH.HUD) SH.HUD.setTutorial(null);
-  } else {
-    SH.G.money = 120;
-    SH.Missions.restore(null);
-    if (SH.Economy) SH.Economy.restore(null);
-    tutorial.done = false;
-  }
-  SH.Player.heal();
-  SH.Police.clearWanted();
-  SH.HUD.hideTitle();
-  SH.HUD.hideOver();
-  SH.G.mode = 'playing';
-  SH.G.started = true;
-  SH.Missions.begin();
-  if (!save && !tutorial.done) tutorialStart();
-  SH.Save.save();
-}
-
-function gameOver(kind) {
-  if (SH.G.mode !== 'playing') return;
-  SH.G.mode = kind; // 'wasted' | 'busted'
-  if (kind === 'wasted') SH.Audio.wasted(); else SH.Audio.busted();
-  SH.Audio.setEngine(-1);
-  SH.Audio.setSiren(0);
-  SH.HUD.showOver(kind);
-  SH.Missions.onPlayerDown();
-}
-
-function respawn() {
-  // the city hospital drops you at Bayfront & Solstice, lighter of pocket
-  if (SH.G.mode === 'wasted') {
-    if (SH.Economy) SH.Economy.spendCash(100);
-    else SH.G.money = Math.max(0, SH.G.money - 100);
-  }
-  SH.Police.clearWanted();
-  SH.Player.respawn(6, 40);
-  SH.HUD.hideOver();
-  SH.G.mode = 'playing';
-  // restart the interrupted mission if its restart timer already lapsed
-  if (!SH.Missions.state.active && !SH.Missions.state.storyDone) SH.Missions.begin();
-  SH.Save.save();
-}
-
-SH.Main = { startGame: startGame, gameOver: gameOver, respawn: respawn };
-
-// --- input -------------------------------------------------------------------------------------
-function bindInput() {
-  window.addEventListener('keydown', function (e) {
-    SH.Audio.unlock();
-    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].indexOf(e.code) >= 0) e.preventDefault();
-    if (!e.repeat) SH.KeysPressed[e.code] = true;
-    SH.Keys[e.code] = true;
-
-    if (e.code === 'KeyM') {
-      var m = SH.Audio.setMuted(!SH.Audio.isMuted());
-      SH.HUD.setMutedNote(m);
+    window.addEventListener('resize', function () {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+    var last = performance.now();
+    function frame(now) {
+      requestAnimationFrame(frame);
+      var dt = Math.min(0.05, (now - last) / 1000); last = now;
+      step(dt);
+      renderer.render(scene, camera);
+      SH.Shots.tick();
     }
-    if (SH.G.mode === 'title' && (e.code === 'Enter')) {
-      startGame(!!SH.Save.read());
-    } else if ((SH.G.mode === 'wasted' || SH.G.mode === 'busted') && e.code === 'KeyR') {
-      respawn();
-    } else if (SH.G.mode === 'playing' && (e.code === 'KeyP' || e.code === 'Escape')) {
-      SH.G.mode = 'paused';
-      SH.HUD.showPause(true);
-    } else if (SH.G.mode === 'paused' && (e.code === 'KeyP' || e.code === 'Escape' || e.code === 'Enter')) {
-      SH.G.mode = 'playing';
-      SH.HUD.showPause(false);
-    } else if (SH.G.mode === 'playing' && e.code === 'KeyT') {
-      SH.Missions.toggleTaxi();
-    } else if (SH.G.mode === 'playing' && e.code === 'KeyJ') {
-      if (SH.Jobs) SH.Jobs.toggleAtPlayer();
-    } else if (SH.G.mode === 'playing' && e.code === 'Backspace' && tutorial.active) {
-      tutorialSkip();
-    }
-  });
-  window.addEventListener('keyup', function (e) { SH.Keys[e.code] = false; });
-  window.addEventListener('pointerdown', function () { SH.Audio.unlock(); }, { passive: true });
-
-  var btnNew = document.getElementById('btn-new');
-  var btnContinue = document.getElementById('btn-continue');
-  if (btnNew) btnNew.addEventListener('click', function () { SH.Audio.unlock(); startGame(false); });
-  if (btnContinue) btnContinue.addEventListener('click', function () { SH.Audio.unlock(); startGame(true); });
-  // Round 11: the help overlay opens from the title and pauses alike
-  var btnHelp = document.getElementById('btn-help');
-  var helpClose = document.getElementById('help-close');
-  var helpOverlay = document.getElementById('help-overlay');
-  if (btnHelp && helpOverlay) btnHelp.addEventListener('click', function () { helpOverlay.classList.add('show'); });
-  if (helpClose && helpOverlay) helpClose.addEventListener('click', function () { helpOverlay.classList.remove('show'); });
-}
-
-// --- world construction ---------------------------------------------------------------------------
-function buildWorld() {
-  SH.City.build(scene);
-  SH.Player.build();
-  SH.Vehicles.spawnTraffic(C.tuning.trafficCount);
-  SH.Vehicles.spawnParked(C.tuning.parkedCount);
-  SH.People.spawnCrowd(C.tuning.pedCount);
-  SH.Missions.init();
-  if (SH.Jobs) SH.Jobs.init();
-  SH.HUD.init();
-}
-
-// --- attract mode (title) ----------------------------------------------------------------------------
-function attractCamera(dt) {
-  attractAngle += dt * 0.045;
-  var r = 128;
-  camera.position.set(Math.cos(attractAngle) * r, 34 + Math.sin(attractAngle * 0.7) * 7, Math.sin(attractAngle) * r);
-  camera.lookAt(10, 4, 0);
-}
-
-// --- main loop -------------------------------------------------------------------------------------------------
-var lastNow = 0;
-var autosaveTimer = 20;
-function loop(now) {
-  requestAnimationFrame(loop);
-  var dt = Math.min(0.05, lastNow ? (now - lastNow) / 1000 : 0.016);
-  lastNow = now;
-  frameCount++;
-
-  if (SH.G.shotMode) {
-    // composed stills: hold the world, run only cosmetic animation
-    SH.G.time += dt;
-    SH.Shots.frame(dt, SH.G.time);
-    SH.HUD.update(dt);
-    renderer.render(scene, camera);
-    if (frameCount >= 55 && !shotFrozen) {
-      shotFrozen = true;
-      window.__shotReady = true;
-    }
-    if (frameCount === 2) markBootOk();
-    return;
+    requestAnimationFrame(frame);
   }
 
-  if (SH.G.mode !== 'paused') {
-    SH.G.time += dt;
-    SH.G.dayT = (SH.G.dayT + dt / C.tuning.dayLength) % 1;
-    applyDayCycle();
-    SH.City.update(dt, SH.G.time);
+  function bindButtons() {
+    function on(idName, fn) { var e = document.getElementById(idName); if (e) e.addEventListener('click', fn); }
+    on('startbtn', function () { SH.Audio.init(); G.resume(); });
+    on('resumebtn', function () { G.resume(); });
+    on('bustedbtn', function () { G.respawnAfter(); });
+    on('wastedbtn', function () { G.respawnAfter(); });
+    on('dialogbox', function () { SH.HUD.nextDialog(); });
+    var dlg = document.getElementById('dialog'); if (dlg) dlg.addEventListener('click', function () { SH.HUD.nextDialog(); });
   }
 
-  if (SH.G.mode === 'title') {
-    attractCamera(dt);
-    SH.Vehicles.update(dt);
-    SH.People.update(dt);
-  } else if (SH.G.mode === 'playing') {
-    SH.Player.update(dt);
-    SH.Vehicles.update(dt);
-    SH.People.update(dt);
-    SH.Police.update(dt);
-    SH.Missions.update(dt);
-    if (SH.Jobs) SH.Jobs.update(dt);
-    if (SH.Economy) SH.Economy.update(dt);
-    tutorialUpdate();
-    // Round 11: gentle autosave — bank/XP/stats earned between mission
-    // saves should survive a closed tab, not just a completed mission.
-    autosaveTimer -= dt;
-    if (autosaveTimer <= 0) { autosaveTimer = 20; SH.Save.save(); }
-    SH.HUD.update(dt);
-  } else if (SH.G.mode === 'wasted' || SH.G.mode === 'busted') {
-    SH.Vehicles.update(dt);
-    SH.People.update(dt);
-    SH.HUD.update(dt);
-  }
-  // paused: render the frozen frame only
-
-  renderer.render(scene, camera);
-  if (frameCount === 2) markBootOk();
-  SH.KeysPressed = {};
-}
-
-var bootMarked = false;
-function markBootOk() {
-  if (bootMarked) return;
-  bootMarked = true;
-  window.__gameReady = true;
-  var el = document.getElementById('boot-ok');
-  if (el) el.textContent = 'ready';
-}
-
-// --- boot -----------------------------------------------------------------------------------------------------------
-function boot() {
-  initGraphics();
-  buildWorld();
-  applyDayCycle();
-  bindInput();
-  if (SH.G.shotMode && SH.Shots.active()) {
-    SH.G.mode = 'playing';
-    SH.G.dayT = 0.465; // pin golden hour for the stills
-    applyDayCycle();
-    SH.HUD.hideTitle();
-    SH.Shots.setup();
-    // HUD reflects the composed scene (stars, speedo, minimap)
-    SH.HUD.update(0.016);
-  } else {
-    SH.G.mode = 'title';
-    var save = SH.Save.read();
-    SH.HUD.showTitle(!!save);
-    if (save) {
-      // Round 11: the title card now carries the saver's reputation + bank
-      var line = 'Saved run: ' + U.fmtMoney(save.money || 0) + ' · mission ' +
-        Math.min((save.missionIndex || 0) + 1, C.missions.length) + ' of ' + C.missions.length;
-      if (save.economy) {
-        var tmp = document.createElement('span');
-        var lvlName = 'Street Rat';
-        var lvls = C.economy.levels;
-        for (var li = 0; li < lvls.length; li++) {
-          if ((save.economy.xp || 0) >= lvls[li].xp) lvlName = lvls[li].name;
-        }
-        line += ' · ' + lvlName + ' · bank ' + U.fmtMoney(save.economy.bank || 0);
-        tmp.remove();
+  function bindInput() {
+    window.addEventListener('keydown', function (e) {
+      G.keys[e.code] = true;
+      SH.Audio.init();
+      if (e.code === 'KeyM') { var m = SH.Audio.toggleMute(); SH.HUD.centerMsg(m ? 'Muted' : 'Sound on', 1); }
+      if (e.code === 'KeyP') {
+        // Photo mode: hide every HUD panel for clean postcard captures.
+        G.photoMode = !G.photoMode;
+        document.querySelectorAll('.panel').forEach(function (el) { el.style.visibility = G.photoMode ? 'hidden' : 'visible'; });
+        if (!G.photoMode) SH.HUD.centerMsg('Photo mode off', 1);
       }
-      SH.HUD.setSaveInfo(line);
-      var titleSave = document.getElementById('title-save-line');
-      if (titleSave) titleSave.textContent = line;
+      if (e.code === 'KeyR' && G.state === 'play') { var st = SH.Audio.cycleStation(); SH.HUD.centerMsg('Radio: ' + st.name, 1.4); }
+      if (e.code === 'Escape') {
+        if (G.state === 'play') { G.state = 'pause'; SH.HUD.showScreen('pause'); }
+        else if (G.state === 'pause') G.resume();
+      }
+      if (G.state !== 'play') return;
+      if (e.code === 'KeyE') interact();
+      if (e.code === 'KeyF') SH.Player.attack(G.camHeading + Math.PI);
+      if (e.code === 'Digit1' || e.code === 'Digit2' || e.code === 'Digit3' || e.code === 'Digit4') {
+        var idx = parseInt(e.code.slice(-1), 10) - 1;
+        if (SH.Jobs.nearBoard() && SH.Jobs.board[idx]) SH.Jobs.start(SH.Jobs.board[idx]);
+        else if (idx === 0 && nearRaceOffice()) SH.Races.start(0);
+      }
+      if (e.code === 'KeyB' && SH.Player.car) SH.Races.start(0);
+      if (e.code === 'KeyX') SH.Jobs.cancel();
+    });
+    window.addEventListener('keyup', function (e) { G.keys[e.code] = false; });
+    window.addEventListener('mousedown', function (e) {
+      SH.Audio.init();
+      if (G.state !== 'play' || SH.Shots.isShot()) return;
+      if (e.target && e.target.closest && e.target.closest('.panel,.screen,#dialog')) return;
+      if (SH.HUD.dialogQueue) { SH.HUD.nextDialog(); return; }
+      SH.Player.shoot(G.camHeading + Math.PI);
+    });
+    window.addEventListener('mousemove', function (e) {
+      if (G.state === 'play' && !SH.Player.car) {
+        // Mouse steers the on-foot camera gently.
+        G.camHeading -= (e.movementX || 0) * 0.0022;
+      }
+    });
+  }
+  function nearRaceOffice() {
+    var p = SH.Player.pos(), a = SH.City.anchors.raceOffice;
+    return U.dist2d(p.x, p.z, a.x, a.z) < 9;
+  }
+  function interact() {
+    var P = SH.Player;
+    if (P.car) { P.exitCar(); return; }
+    if (SH.Missions.interact()) return;
+    if (SH.Jobs.nearBoard()) { SH.HUD.centerMsg('Pick a job: keys 1-4', 1.6); return; }
+    if (nearRaceOffice()) { SH.Races.start(0); return; }
+    var p = P.pos();
+    // Shop anchor cycles the catalogue with E (buys first affordable highlighted item via HUD msg).
+    var shop = SH.City.anchors.shop;
+    if (U.dist2d(p.x, p.z, shop.x, shop.z) < 7) {
+      G.shopIdx = ((G.shopIdx || 0) + 1) % C.SHOP.length;
+      var item = C.SHOP[G.shopIdx];
+      if (SH.Economy.cash >= item.price) SH.Economy.buy(item);
+      else SH.HUD.centerMsg(item.name + ' - ' + U.fmtMoney(item.price) + ' (need more cash)', 1.8);
+      return;
+    }
+    var car = SH.Vehicles.nearestCar(p.x, p.z, C.PLAYER.enterRange + 1.5);
+    if (car) P.enterCar(car);
+  }
+  G.interact = interact;
+
+  function readInput() {
+    var k = G.keys;
+    return {
+      up: !!(k.KeyW || k.ArrowUp), down: !!(k.KeyS || k.ArrowDown),
+      left: !!(k.KeyA || k.ArrowLeft), right: !!(k.KeyD || k.ArrowRight),
+      run: !!(k.ShiftLeft || k.ShiftRight), brake: !!k.Space, handbrake: !!k.Space,
+      aim: !!k.MouseRight
+    };
+  }
+
+  function step(dt) {
+    G.time += dt;
+    var shot = SH.Shots.isShot();
+    var playing = G.state === 'play' || shot;
+    var focus = SH.Player.pos();
+    SH.Weather.update(playing ? dt : dt * 0.25, focus);
+    SH.City.update(dt, G.time);
+    if (playing && !shot) {
+      var input = readInput();
+      var timeScale = SH.Races.timeScale();
+      var sdt = dt * timeScale;
+      if (SH.Player.car) SH.Vehicles.drivePlayer(SH.Player.car, input, sdt);
+      SH.Player.update(sdt, input, G.camHeading);
+      SH.Vehicles.updateTraffic(sdt, focus);
+      SH.People.update(sdt, (SH.Police.stars > 0 || input.aim) ? focus : null);
+      SH.Police.update(sdt, G.scene, SH.Player);
+      SH.Missions.update(sdt);
+      SH.Jobs.update(sdt);
+      SH.Races.update(sdt);
+      SH.Activities.update(sdt);
+      SH.Audio.update(dt, SH.Player.car ? SH.Player.car.speed : 0, !!SH.Player.car, SH.Police.nearestUnitDist(focus.x, focus.z) < 30);
+      // Context prompt.
+      updatePrompt();
+      G.autosave += dt;
+      if (G.autosave > C.AUTOSAVE_SEC) { G.autosave = 0; SH.Economy.save(); }
+    } else if (shot) {
+      // Keep the composed scene alive: idle animations only.
+      SH.People.update(dt * 0.4, null);
+      SH.Activities.shells.forEach(function (s) { if (!s.found) s.mesh.rotation.y += dt; });
+    }
+    SH.HUD.update(dt);
+    updateCamera(dt, shot);
+  }
+  function updatePrompt() {
+    var P = SH.Player;
+    if (P.car) { SH.HUD.contextPrompt('E - exit car | Space - handbrake | B - race (at office) | M - mute'); return; }
+    var p = P.pos();
+    if (SH.Missions._offered) return; // mission prompt already set
+    var car = SH.Vehicles.nearestCar(p.x, p.z, C.PLAYER.enterRange + 1.5);
+    if (car) SH.HUD.contextPrompt('E - drive the ' + car.model.name);
+    else if (SH.Jobs.nearBoard()) SH.HUD.contextPrompt('Job board - press 1-4 to take work');
+    else if (nearRaceOffice()) SH.HUD.contextPrompt('E / 1 - start Boardwalk Sprint race');
+    else {
+      var shop = SH.City.anchors.shop;
+      if (U.dist2d(p.x, p.z, shop.x, shop.z) < 7) SH.HUD.contextPrompt('E - shop (browse & buy)');
+      else SH.HUD.contextPrompt('');
     }
   }
-  requestAnimationFrame(loop);
-}
-
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', boot);
-} else {
-  boot();
-}
-})();
+  function updateCamera(dt, shot) {
+    var cam = G.camera, P = SH.Player;
+    if (shot) { cam.position.copy(G.camPos); cam.lookAt(G.camTarget); return; }
+    if (G.state === 'menu') {
+      var a = G.time * 0.07;
+      cam.position.set(330 + Math.cos(a) * 60, 24 + Math.sin(G.time * 0.2) * 4, 30 + Math.sin(a) * 60);
+      cam.lookAt(325, 3, 35);
+      return;
+    }
+    if (P.car) {
+      var car = P.car;
+      var back = 10.5 + Math.abs(car.speed) * 0.16, h = 4.2 + Math.abs(car.speed) * 0.05;
+      var tx = car.x - Math.sin(car.heading) * back, tz = car.z - Math.cos(car.heading) * back;
+      G.camPos.x = U.damp(G.camPos.x, tx, 5, dt); G.camPos.z = U.damp(G.camPos.z, tz, 5, dt);
+      G.camPos.y = U.damp(G.camPos.y, h + (car.airY || 0), 5, dt);
+      cam.position.copy(G.camPos);
+      G.camTarget.set(car.x + Math.sin(car.heading) * 8, 1.4, car.z + Math.cos(car.heading) * 8);
+      cam.lookAt(G.camTarget);
+      var targetFov = 62 + Math.min(16, Math.abs(car.speed) * 0.45);
+      cam.fov = U.damp(cam.fov, targetFov, 3, dt); cam.updateProjectionMatrix();
+      G.camHeading = car.heading + Math.PI;
+    } else {
+      var px = P.x - Math.sin(G.camHeading) * 8.5, pz = P.z - Math.cos(G.camHeading) * 8.5;
+      G.camPos.x = U.damp(G.camPos.x, px, 7, dt); G.camPos.z = U.damp(G.camPos.z, pz, 7, dt);
+      G.camPos.y = U.damp(G.camPos.y, 3.4, 7, dt);
+      cam.position.copy(G.camPos);
+      G.camTarget.set(P.x, 1.5, P.z);
+      cam.lookAt(G.camTarget);
+      cam.fov = U.damp(cam.fov, 60, 3, dt); cam.updateProjectionMatrix();
+    }
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+})(window.SH);
