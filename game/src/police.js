@@ -1,181 +1,230 @@
-// police.js — the Solstice Bay Police Department: the wanted heat that crimes raise,
-// the stars it shows as, the interceptors that answer it, roadblocks at three stars,
-// foot officers at four, and the bust meter that ends a chase when they pin you.
-// Heat only counts in full when somebody saw the crime — slip away unseen and it fades.
+// police.js — the Solstice Bay PD. Crime raises heat; heat becomes stars;
+// stars bring interceptors, then foot officers, roadblocks and gunfire.
+// Heat decays while nobody in uniform can see the player, and hiding long
+// enough loses the tail entirely. Officers shoot only at four stars and
+// above, and a bust needs the player slow, close and seen — run and it
+// drains away.
 
-import { WANTED } from './config.js';
-import { clamp, dist, angleTo, angleDelta } from './random.js';
-import { CAR_MODELS, makeVehicle, stepVehicle, damageVehicle } from './vehicles.js';
-import { sfx } from './audio.js';
+import { clamp } from './random.js';
+import { createVehicle, controlToward, stepVehicle, damageVehicle } from './vehicles.js';
+import { hurtPed } from './pedestrians.js';
 
-const INTERCEPTOR = CAR_MODELS.find((m) => m.police);
+const STAR_HEAT = [0, 12, 30, 55, 85, 120]; // heat needed for 1..5 stars
 
-export function createPoliceState() {
-  return { heat: 0, stars: 0, bust: 0, seenT: 0, spawnT: 0, blockSet: false };
-}
-
-export function starsForHeat(heat) {
-  if (heat <= 0) return 0;
-  return Math.min(WANTED.maxStars, 1 + Math.floor(heat / 110));
-}
-
-// Was the crime witnessed? A pedestrian or officer within earshot makes it count.
-function witnessed(game, x, y) {
-  for (const ped of game.peds) if (!ped.dead && dist(ped.x, ped.y, x, y) < 300) return true;
-  for (const v of game.vehicles) if (v.driver === 'cop' && dist(v.x, v.y, x, y) < 460) return true;
-  for (const c of game.copPeds) if (!c.dead && dist(c.x, c.y, x, y) < 380) return true;
-  return false;
-}
-
-export function addHeat(game, points, x, y, always = false) {
-  const before = game.police.stars;
-  const full = always || witnessed(game, x ?? game.player.x, y ?? game.player.y);
-  game.police.heat = clamp(game.police.heat + points * (full ? 1 : 0.35), 0, 560);
-  game.police.stars = starsForHeat(game.police.heat);
-  if (game.police.stars > before) sfx.star();
-}
-
-export function clearHeat(game) {
-  game.police.heat = 0;
-  game.police.stars = 0;
-  game.police.bust = 0;
-}
-
-export function stepWanted(game, dt) {
-  const pol = game.police;
-  const p = game.player;
-  // Does any officer currently have eyes on the player?
-  let seen = false;
-  const px = p.inVehicle && p.vehicle ? p.vehicle.x : p.x;
-  const py = p.inVehicle && p.vehicle ? p.vehicle.y : p.y;
-  for (const v of game.vehicles) {
-    if (v.driver === 'cop' && !v.dead && dist(v.x, v.y, px, py) < WANTED.sightRange) seen = true;
+// Can an officer at (ox, oy) see the point (x, y)? Buildings block sight;
+// range shrinks at night and in rain.
+export function canSee(G, ox, oy, x, y) {
+  const d = Math.hypot(x - ox, y - oy);
+  let range = 430;
+  if (G.weather.rain > 0.5) range *= 0.75;
+  if (d > range) return false;
+  const steps = Math.ceil(d / 46);
+  for (let i = 1; i < steps; i++) {
+    const sx = ox + ((x - ox) * i) / steps;
+    const sy = oy + ((y - oy) * i) / steps;
+    if (G.city.buildingPush(sx, sy, 4)) return false;
   }
-  for (const c of game.copPeds) if (!c.dead && dist(c.x, c.y, px, py) < 300) seen = true;
-  pol.seenT = seen ? 0 : pol.seenT + dt;
-  if (!seen && pol.heat > 0) {
-    pol.heat = Math.max(0, pol.heat - WANTED.decayPerSecond * dt * (1 + pol.stars * 0.35));
-    pol.stars = starsForHeat(pol.heat);
-  }
-  if (pol.stars === 0) pol.bust = Math.max(0, pol.bust - dt * 1.5);
-
-  // Keep the response sized to the stars: two cars a star, plus foot officers late on.
-  const wantCars = pol.stars === 0 ? 0 : Math.min(2 + pol.stars * 2, 9);
-  const copCars = game.vehicles.filter((v) => v.driver === 'cop');
-  pol.spawnT -= dt;
-  if (copCars.length < wantCars && pol.spawnT <= 0) {
-    pol.spawnT = 1.1;
-    spawnCopCar(game, px, py);
-  }
-  if (pol.stars === 0) {
-    for (const v of copCars) if (dist(v.x, v.y, px, py) > 1300) v.removeMe = true;
-    for (const c of game.copPeds) if (dist(c.x, c.y, px, py) > 900) c.removeMe = true;
-  }
-  // Foot officers bail out of stopped interceptors when the player is on foot.
-  if (pol.stars >= 3 && !p.inVehicle && game.copPeds.length < pol.stars - 1) {
-    const near = copCars.find((v) => !v.dead && Math.abs(v.speed) < 30 && dist(v.x, v.y, px, py) < 300);
-    if (near) {
-      game.copPeds.push({
-        x: near.x + 20, y: near.y + 10, angle: 0, speed: 0, hp: 100, dead: false,
-        downT: 0, panicT: 0, threatX: 0, threatY: 0, wanderT: 0, chatT: 0,
-        shirt: '#1c2733', skin: '#d9a066', pants: '#141c26', walkPhase: 0, cop: true, shootT: 0,
-      });
-    }
-  }
+  return true;
 }
 
-function spawnCopCar(game, px, py) {
-  const city = game.city;
-  let best = null;
-  let bestScore = -Infinity;
-  for (const n of city.nodes) {
-    const d = dist(n.x, n.y, px, py);
-    if (d < 620 || d > 1250) continue;
-    const score = -Math.abs(d - 880) + Math.random() * 60;
-    if (score > bestScore) { bestScore = score; best = n; }
-  }
-  if (!best) return;
-  const v = makeVehicle(INTERCEPTOR, best.x, best.y, angleTo(best.x, best.y, px, py), '#1c2733');
-  v.driver = 'cop';
-  v.livery = true;
-  v.blockMode = false;
-  game.vehicles.push(v);
-  sfx.alarm();
+export function createPoliceSystem() {
+  const P = {
+    heat: 0,
+    stars: 0,
+    seen: 0,
+    unseen: 99,
+    bust: 0,
+    units: [],
+    officers: [],
+    blockT: 0,
+    shotT: 0,
+
+    // A crime, reported. Unwitnessed crime still warms the air a little —
+    // someone always hears a crash — but witnesses are what bring stars.
+    report(G, severity, x, y, witnessed) {
+      const near = G.peds.some((p) => Math.hypot(p.x - x, p.y - y) < 320);
+      const seenByCop = P.units.some((u) => Math.hypot(u.x - x, u.y - y) < 460) || P.officers.some((o) => Math.hypot(o.x - x, o.y - y) < 380);
+      const gain = severity * (witnessed || near || seenByCop ? 1 : 0.3);
+      P.heat = Math.min(150, P.heat + gain);
+      P.syncStars();
+    },
+
+    syncStars() {
+      let s = 0;
+      for (let i = 0; i < STAR_HEAT.length; i++) if (P.heat >= STAR_HEAT[i]) s = i;
+      P.stars = s;
+    },
+
+    clear() {
+      P.heat = 0;
+      P.stars = 0;
+      P.bust = 0;
+      P.unseen = 99;
+      for (const u of P.units) u.driver = 'traffic'; // they give up and patrol off
+      P.units = [];
+      P.officers = [];
+    },
+
+    wantedLevel() {
+      return P.stars;
+    },
+
+    update(G, dt) {
+      const player = G.player;
+      const px = player.vehicle ? player.vehicle.x : player.x;
+      const py = player.vehicle ? player.vehicle.y : player.y;
+
+      // Sight: any unit or officer with line of sight counts.
+      let visible = false;
+      for (const u of P.units) if (canSee(G, u.x, u.y, px, py)) { visible = true; break; }
+      if (!visible) for (const o of P.officers) if (canSee(G, o.x, o.y, px, py)) { visible = true; break; }
+      if (P.stars > 0 && P.units.length === 0 && P.officers.length === 0) visible = false;
+
+      if (visible) {
+        P.seen += dt;
+        P.unseen = 0;
+        P.heat = Math.min(150, P.heat + dt * 1.1);
+      } else {
+        P.unseen += dt;
+        P.seen = 0;
+        if (P.stars > 0) P.heat -= dt * (P.unseen > 4 ? 3.4 : 0.8);
+        if (P.heat <= 0.2 && P.stars > 0) {
+          P.heat = 0;
+          G.hud.notify('You lost the cops.');
+          G.audio.play('objective');
+        }
+      }
+      P.syncStars();
+
+      // Force size follows the stars.
+      const wantCars = P.stars === 0 ? 0 : [0, 1, 2, 3, 4, 5][P.stars];
+      const wantFeet = P.stars >= 3 ? P.stars - 1 : 0;
+      spawnUnits(G, P, wantCars, px, py);
+      spawnOfficers(G, P, wantFeet, px, py);
+
+      // Pursuit: aim ahead of the player's motion; ram at close quarters.
+      // Roadblock cars hold their line and only settle.
+      for (const u of P.units) {
+        if (u.parked) {
+          stepVehicle(G, u, { throttle: 0, steer: 0, handbrake: true }, dt);
+          continue;
+        }
+        const lead = player.vehicle ? 0.55 : 0.25;
+        const tx = px + (player.vehicle ? player.vehicle.vx : 0) * lead;
+        const ty = py + (player.vehicle ? player.vehicle.vy : 0) * lead;
+        const control = controlToward(u, tx, ty, { reach: 30 });
+        if (Math.hypot(px - u.x, py - u.y) < 56) control.throttle = 1;
+        stepVehicle(G, u, control, dt);
+      }
+      // Officers on foot chase and, at 4+ stars, shoot.
+      P.shotT -= dt;
+      for (const o of P.officers) {
+        const d = Math.hypot(px - o.x, py - o.y);
+        const want = Math.atan2(py - o.y, px - o.x);
+        o.angle = want;
+        if (d > 130) {
+          o.x += Math.cos(want) * 150 * dt;
+          o.y += Math.sin(want) * 150 * dt;
+        }
+        if (P.stars >= 4 && d < 330 && P.shotT <= 0 && canSee(G, o.x, o.y, px, py)) {
+          P.shotT = 0.55;
+          G.fx.muzzle(o.x, o.y, want);
+          G.audio.play('shot');
+          if (Math.random() < 0.42) G.hurtPlayer(7, want);
+        }
+        if (o.health <= 0) o.dead = true;
+      }
+      P.officers = P.officers.filter((o) => !o.dead);
+
+      // Roadblocks at 3+ stars: parked interceptors across the road ahead.
+      P.blockT -= dt;
+      if (P.stars >= 3 && P.blockT <= 0) {
+        P.blockT = 26;
+        makeRoadblock(G, P, px, py);
+      }
+
+      // The bust meter: slow + close + seen fills it; speed or cover drains.
+      const playerSpeed = player.vehicle ? Math.hypot(player.vehicle.vx, player.vehicle.vy) : (player.moving ? 150 : 0);
+      const nearest = nearestCop(G, P, px, py);
+      if (visible && playerSpeed < 55 && nearest < 120) P.bust += dt * 0.5;
+      else P.bust = Math.max(0, P.bust - dt * 0.65);
+      if (P.bust >= 1) {
+        P.bust = 0;
+        G.events.push({ type: 'busted' });
+      }
+
+      // Sirens follow the nearest chase.
+      G.audio.setSiren(P.stars > 0 && nearest < 640);
+    },
+  };
+  return P;
 }
 
-// One interceptor's pursuit: aim where the player is heading, lean on the bumper,
-// and at three stars send some cars ahead to park across the road instead.
-export function stepCopCar(game, v, dt) {
-  const p = game.player;
-  const target = p.inVehicle && p.vehicle ? p.vehicle : p;
-  const lead = clamp(dist(v.x, v.y, target.x, target.y) / 300, 0, 1.2);
-  const tx = target.x + Math.cos(target.angle ?? 0) * (target.speed ?? 0) * 0.45 * lead;
-  const ty = target.y + Math.sin(target.angle ?? 0) * (target.speed ?? 0) * 0.45 * lead;
-  const stars = game.police.stars;
+function nearestCop(G, P, px, py) {
+  let best = Infinity;
+  for (const u of P.units) best = Math.min(best, Math.hypot(u.x - px, u.y - py));
+  for (const o of P.officers) best = Math.min(best, Math.hypot(o.x - px, o.y - py));
+  return best;
+}
 
-  if (stars >= 3 && v.blockMode === false && Math.random() < 0.004) v.blockMode = true;
-  if (v.blockMode) {
-    const ahead = game.city.nearestNode(tx + Math.cos(target.angle ?? 0) * 320, ty + Math.sin(target.angle ?? 0) * 320);
-    const d = dist(v.x, v.y, ahead.x, ahead.y);
-    if (d < 30) {
-      v.angle += (((Math.atan2(ahead.y - v.y, ahead.x - v.x)) + Math.PI / 2) - v.angle) * dt; // settle across the road
-      stepVehicle(game, v, dt, { throttle: 0, steer: 0, brake: true, handbrake: true });
-      return;
-    }
-    const want = angleTo(v.x, v.y, ahead.x, ahead.y);
-    stepVehicle(game, v, dt, { throttle: 0.95, steer: clamp(angleDelta(v.angle, want) * 2.4, -1, 1), brake: false, handbrake: false });
+function spawnUnits(G, P, want, px, py) {
+  // No stars: the chase is over — units peel off and become traffic.
+  if (want === 0) {
+    for (const u of P.units) u.driver = 'traffic';
+    P.units = [];
     return;
   }
-
-  const want = angleTo(v.x, v.y, tx, ty);
-  const steer = clamp(angleDelta(v.angle, want) * 2.6, -1, 1);
-  const d = dist(v.x, v.y, target.x, target.y);
-  let throttle = 1;
-  if (d < 60) throttle = 0.55;                       // sit on the bumper, don't orbit
-  if (d > 700) throttle = 1;                          // far behind: flat out
-  const ctrl = { throttle, steer, brake: d < 34 && Math.abs(v.speed) > 120, handbrake: Math.abs(angleDelta(v.angle, want)) > 2.2 };
-  const before = v.speed;
-  stepVehicle(game, v, dt, ctrl);
-  if (p.inVehicle && p.vehicle && dist(v.x, v.y, p.vehicle.x, p.vehicle.y) < (v.model.l + p.vehicle.model.l) / 2.4) {
-    if (Math.abs(before) > 130) addHeat(game, 0, v.x, v.y, true); // ramming is already priced in stars
-  }
-}
-
-// Foot officers run the player down and, at four stars, shoot to stop the car.
-export function stepCopPed(game, c, dt) {
-  if (c.dead) return;
-  if (c.downT > 0) { c.downT -= dt; return; }
-  const p = game.player;
-  const tx = p.inVehicle && p.vehicle ? p.vehicle.x : p.x;
-  const ty = p.inVehicle && p.vehicle ? p.vehicle.y : p.y;
-  const d = dist(c.x, c.y, tx, ty);
-  const want = angleTo(c.x, c.y, tx, ty);
-  c.angle += clamp(angleDelta(c.angle, want), -4 * dt, 4 * dt);
-  const speed = d > 26 ? 196 : 0;
-  c.x += Math.cos(c.angle) * speed * dt;
-  c.y += Math.sin(c.angle) * speed * dt;
-  c.walkPhase += dt * 11;
-  if (!p.inVehicle && d < 30) {
-    game.police.bust = Math.min(1, game.police.bust + dt / WANTED.bustFillTime * 1.5);
-  }
-  if (game.police.stars >= 4 && d < 330 && d > 60) {
-    c.shootT -= dt;
-    if (c.shootT <= 0) {
-      c.shootT = 0.9 + Math.random() * 0.5;
-      game.fx.muzzle(c.x, c.y, c.angle);
-      sfx.shot();
-      if (Math.random() < 0.42) game.damagePlayer(6 + Math.random() * 6, c.x, c.y);
+  // Retire units that fell too far behind.
+  for (let i = P.units.length - 1; i >= 0; i--) {
+    const u = P.units[i];
+    if (Math.hypot(u.x - px, u.y - py) > 1500 || u.dead) {
+      u.driver = 'traffic';
+      const gi = G.vehicles.indexOf(u);
+      if (gi !== -1) G.vehicles.splice(gi, 1);
+      P.units.splice(i, 1);
     }
   }
-}
-
-export function hurtCopPed(game, c, damage, fromX, fromY) {
-  if (c.dead) return;
-  c.hp -= damage;
-  game.fx.blood(c.x, c.y);
-  if (c.hp <= 0) {
-    c.dead = true;
-    addHeat(game, WANTED.heatFor.killCop, c.x, c.y, true);
-    game.addCash(0); // no reward for this; the stars are the price
+  let guard = 0;
+  while (P.units.length < want && guard++ < 8) {
+    // Spawn on a road, off-screen but close.
+    const a = G.rng.range(0, Math.PI * 2);
+    const p = G.city.randomRoadPoint(G.rng);
+    if (Math.hypot(p.x - px, p.y - py) < 560) continue;
+    if (Math.hypot(p.x - px, p.y - py) > 1200) continue;
+    const u = createVehicle('interceptor', p.x, p.y, a, { driver: 'police' });
+    G.vehicles.push(u);
+    P.units.push(u);
   }
 }
+
+function spawnOfficers(G, P, want, px, py) {
+  for (let i = P.officers.length - 1; i >= 0; i--) {
+    if (Math.hypot(P.officers[i].x - px, P.officers[i].y - py) > 1300) P.officers.splice(i, 1);
+  }
+  let guard = 0;
+  while (P.officers.length < want && guard++ < 8) {
+    const a = G.rng.range(0, Math.PI * 2);
+    const d = G.rng.range(420, 560);
+    const x = px + Math.cos(a) * d;
+    const y = py + Math.sin(a) * d;
+    if (x < 20 || y < 20 || x > 4780 || y > 3580) continue;
+    P.officers.push({ x, y, angle: 0, health: 40, shirt: '#1c2f57', skin: '#c88a5a', state: 'walk', timer: 0, tx: x, ty: y, speed: 150 });
+  }
+}
+
+function makeRoadblock(G, P, px, py) {
+  // Two interceptors parked across the road in the player's heading.
+  const heading = G.player.vehicle ? G.player.vehicle.angle : G.player.angle;
+  const bx = px + Math.cos(heading) * 620;
+  const by = py + Math.sin(heading) * 620;
+  const node = G.city.nearestNode(bx, by);
+  if (!node) return;
+  for (let i = -1; i <= 1; i += 2) {
+    const u = createVehicle('interceptor', node.x + i * 30, node.y + (i > 0 ? 14 : -14), heading + Math.PI / 2, { driver: 'police' });
+    u.parked = true;
+    G.vehicles.push(u);
+    P.units.push(u);
+  }
+}
+
+export { damageVehicle, hurtPed };

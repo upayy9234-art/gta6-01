@@ -1,55 +1,76 @@
-// input.js — keyboard and mouse state, polled by the game loop. Edge presses
-// ("just pressed") latch for exactly one frame so prompts and menus feel exact,
-// and the mouse position is kept in the game's fixed 1280x720 view space.
+// input.js — keyboard and mouse state for the game. Tracks three things:
+// keys held down, keys pressed this frame (edge-triggered, for E to enter a
+// car or Enter to start), and the mouse with its aim position on screen.
 
-const held = new Set();
-const pressed = new Set();
-let mouseX = 640;
-let mouseY = 360;
-let mouseDown = false;
-let mouseClicked = false;
+export function createInput(canvas) {
+  const held = new Set();
+  const pressed = new Set();
+  const mouse = { x: 0, y: 0, down: false, clicked: false };
 
-export const VIEW_W = 1280;
-export const VIEW_H = 720;
-
-export function initInput(canvas) {
-  window.addEventListener('keydown', (e) => {
-    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
-    if (!e.repeat) pressed.add(e.code);
+  function onKeyDown(e) {
+    if (e.repeat) return;
     held.add(e.code);
-  });
-  window.addEventListener('keyup', (e) => held.delete(e.code));
-  window.addEventListener('blur', () => { held.clear(); mouseDown = false; });
-  canvas.addEventListener('mousemove', (e) => {
+    pressed.add(e.code);
+    // Keep the page from scrolling or tabbing away mid-chase.
+    if (e.code === 'Space' || e.code.startsWith('Arrow')) e.preventDefault();
+  }
+  function onKeyUp(e) {
+    held.delete(e.code);
+  }
+  function onMouseMove(e) {
     const rect = canvas.getBoundingClientRect();
-    mouseX = ((e.clientX - rect.left) / rect.width) * VIEW_W;
-    mouseY = ((e.clientY - rect.top) / rect.height) * VIEW_H;
-  });
-  canvas.addEventListener('mousedown', (e) => {
-    if (e.button === 0) { mouseDown = true; mouseClicked = true; }
-  });
-  window.addEventListener('mouseup', (e) => { if (e.button === 0) mouseDown = false; });
-  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    mouse.x = e.clientX - rect.left;
+    mouse.y = e.clientY - rect.top;
+  }
+  function onMouseDown(e) {
+    if (e.button === 0) {
+      mouse.down = true;
+      mouse.clicked = true;
+    }
+  }
+  function onMouseUp(e) {
+    if (e.button === 0) mouse.down = false;
+  }
+  function onBlur() {
+    held.clear();
+    mouse.down = false;
+  }
+
+  window.addEventListener('keydown', onKeyDown);
+  window.addEventListener('keyup', onKeyUp);
+  window.addEventListener('blur', onBlur);
+  canvas.addEventListener('mousemove', onMouseMove);
+  canvas.addEventListener('mousedown', onMouseDown);
+  window.addEventListener('mouseup', onMouseUp);
+
+  return {
+    mouse,
+    down: (code) => held.has(code),
+    hit: (code) => pressed.has(code),
+    // Call once at the end of each frame so edge presses live exactly a frame.
+    endFrame() {
+      pressed.clear();
+      mouse.clicked = false;
+    },
+    destroy() {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
+      canvas.removeEventListener('mousemove', onMouseMove);
+      canvas.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('mouseup', onMouseUp);
+    },
+  };
 }
 
-// Called at the very end of each frame by the loop.
-export function endFrame() {
-  pressed.clear();
-  mouseClicked = false;
-}
-
-export const down = (...codes) => codes.some((c) => held.has(c));
-export const justPressed = (...codes) => codes.some((c) => pressed.has(c));
-export const mouse = () => ({ x: mouseX, y: mouseY, down: mouseDown, clicked: mouseClicked });
-
-// The four movement directions as one normalised vector, from WASD or arrows.
-export function moveVector() {
+// A movement vector from WASD/arrows: x right, y down, not normalised — the
+// caller decides how to treat diagonals.
+export function moveVector(input) {
   let x = 0;
   let y = 0;
-  if (down('KeyA', 'ArrowLeft')) x -= 1;
-  if (down('KeyD', 'ArrowRight')) x += 1;
-  if (down('KeyW', 'ArrowUp')) y -= 1;
-  if (down('KeyS', 'ArrowDown')) y += 1;
-  if (x !== 0 && y !== 0) { x *= Math.SQRT1_2; y *= Math.SQRT1_2; }
+  if (input.down('KeyA') || input.down('ArrowLeft')) x -= 1;
+  if (input.down('KeyD') || input.down('ArrowRight')) x += 1;
+  if (input.down('KeyW') || input.down('ArrowUp')) y -= 1;
+  if (input.down('KeyS') || input.down('ArrowDown')) y += 1;
   return { x, y };
 }

@@ -1,88 +1,84 @@
 # Solstice Heat: Neon Tide
 
-[![make.fun · gta6-01](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
-[![rank](https://make.fun/badge/gta6-01/upayy9234-art/gta6-01/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
-[![reward](https://make.fun/badge/gta6-01/upayy9234-art/gta6-01/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+An original open-world crime game for the browser, built for the make.fun
+**gta6-01** bounty. No engine, no build step, no network: plain ES modules
+and one canvas.
 
-An original open-world crime game set in **Solstice Bay**, a sun-soaked coastal city
-with a bay, a marina and a lighthouse island across a causeway. You are **Jax
-Marlowe**, a wheelman working for fixer **Marisol Vega**: a twelve-mission story
-campaign by road and by sea, with live traffic, pedestrians, a full wanted system,
-taxi and boat-courier side jobs, a street race, collectibles and a day that turns
-from gold to neon. Everything is hand-written JavaScript on one canvas — no engine,
-no assets, no network calls; even the sounds are synthesised WebAudio.
+Welcome to **Solstice Bay** — 4800×3600 units of sun-baked avenues, a neon
+mile, working docks, a marina with three piers, and Lighthouse Isle across
+the water on its own causeway. You are **Jax Marlin**, and you owe the bay
+money. **Marisol Vega** holds the note, and she has twelve jobs that will
+clear it.
 
-Round 14b of the entry: a ground-up rebuild of the earlier Solstice Heat rounds as a
-top-down open world — a bigger bay (8 districts, a curved shoreline, three marina
-piers, the causeway and Lighthouse Isle), drivable boats alongside nine car models,
-and the campaign extended with an escort, a tail, a five-star survival job and the
-two-stage Neon Tide finale.
+## Play it
 
-## How to run
+```sh
+node serve.ts            # then open http://localhost:8080
+```
 
-- Play: open `game/index.html` in desktop Chrome, or serve it: `node serve.ts` then
-  visit http://localhost:8080
-- Hand in (dossier): `mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts` — copies
-  `game/` and `screenshots/` to the output dir and writes `dossier.json` via the
-  vendored `buildDossier`.
+or serve `game/` with any static file server and open `game/index.html`.
+
+**Controls** — WASD/arrows walk and drive · **E** enter/exit a vehicle ·
+**Space** handbrake · **Shift** sprint · mouse aims, click or **F** fights ·
+**P** pause · **M** mute.
 
 ## What's in the bay
 
-- **The city** — an avenue grid with a working traffic graph across 8 districts
-  (Old Town, Palm Heights, University, Neon Mile, Casino Row, The Port, Boardwalk,
-  The Marina), pocket parks, parking lots full of stealable cars, a curved beach
-  shoreline, three marina piers, a causeway bridge and Lighthouse Isle with its
-  turning light.
-- **Vehicles** — 8 civilian models plus the SBPD Interceptor and two boats (the
-  Tide Runner speedboat and a Harbour Skiff). Arcade driving with drift, handbrake
-  skids, collision damage, smoke and fire; traffic that follows the road network,
-  brakes for obstacles and panics at gunfire; boats with wake and spray that beach
-  on the sand.
-- **On foot** — walk, sprint and swim; fists and a pistol with mouse aim;
-  pedestrians who stroll, chat, flee and dive out of the road.
-- **Police** — heat that only fully counts when a crime is witnessed, 0–5 stars,
-  pursuit interceptors that ram and box you, roadblocks from three stars, foot
-  officers from three, gunfire from four, a bust meter, heat decay when you break
-  sight, and WASTED / BUSTED endings with fines and impounds.
-- **Story** — 12 missions for Marisol Vega: thefts, deliveries against the clock, a
-  pistol pickup and three lookouts to clear, a forced-heat delivery, a boat run, a
-  tail, a convoy escort under attack, the island drop, a checkpoint street race, a
-  90-second five-star survival, a roadblocked truck heist, and the two-stage finale.
-- **Side work & economy** — taxi fares (paid by distance, tipped for an unbent
-  car), boat-courier runs, 25 collectible seashells, dropped pickups (health,
-  armour, ammo, cash, a quiet word that cools the heat), a garage that wipes heat
-  and repairs, a clinic, and an armoury. Cash and standing save to localStorage.
-- **World life** — a full day/night cycle (golden hour, lit windows, neon signs,
-  street lamps, headlights, the lighthouse beam), weather that turns clear, hazy,
-  rainy or stormy with lightning, skid marks that linger, particles for sparks,
-  smoke, fire and spray, camera shake, and a GPS minimap with police blips and the
-  objective route.
-
-## Controls
-
-| Keys | Action |
-| --- | --- |
-| WASD / arrows | Move / drive |
-| Shift | Sprint |
-| E | Steal / enter / exit a vehicle, use a shop, take a job |
-| Mouse | Aim |
-| Click / F | Punch or shoot |
-| Q | Fists / pistol |
-| Space | Handbrake |
-| P / Esc | Pause |
-| M | Sound on/off |
-| H | Help (on the title and pause screens) |
+- **A full wanted system.** Crime raises heat; heat becomes one to five
+  stars; stars bring SBPD interceptors, foot officers, roadblocks at three
+  stars and gunfire at four. Break line of sight and stay hidden to cool
+  down — or fill the bust meter by standing still in front of a cruiser.
+- **Twelve missions** for Marisol Vega: car theft and delivery, a timed
+  medical run, a dock shootout, holding two stars on purpose, a buoy
+  course by boat, a tail job, a convoy escort with an ambush, an island
+  drop, the eight-checkpoint **Pink Slip** street race, surviving ninety
+  seconds at five stars, a truck heist, and the two-stage **Neon Tide**
+  finale.
+- **Side work that never runs out**: fares in a Solstice Cab (tips for a
+  clean, quick ride) and boat-courier runs between the piers and the
+  island.
+- **Nine cars and two boats** on one arcade physics model — drift on the
+  handbrake, leave skid marks, beach the boat, drown the coupe.
+- **A living city**: traffic that follows the road graph and brakes for
+  you, pedestrians who stroll, panic and dive, 25 collectible seashells, a
+  garage that repairs, a clinic that heals, an armoury that sells the
+  Harbor 9mm, vests and rounds.
+- **Day, night and weather**: a full day/night cycle with golden hours,
+  neon-lit windows and headlight cones after dark, drifting haze, rain and
+  thunderstorms — plus a lighthouse whose beam sweeps the bay.
+- **Sound, synthesised**: every effect and the title music are WebAudio —
+  there are no audio files.
+- **Saving**: progress (cash, missions, shells, the clock) persists in
+  `localStorage`. Wasted or busted, you wake at the clinic lighter of cash
+  but free to go.
 
 ## Layout
 
-- `main.ts` — the hand-in program (copies the game, builds the dossier).
-- `serve.ts` — a tiny local static server for playing.
-- `game/index.html` — the page; `game/src/` holds the game, one job per file:
-  `config` (tuning), `random` (seeded RNG + geometry), `input`, `audio` (synth
-  SFX), `city` (the bay itself), `vehicles` (driving + traffic), `pedestrians`,
-  `police` (wanted + pursuit), `player`, `missions` (the 12-job campaign),
-  `sidejobs` (taxi + courier), `effects` (particles, skids, floating text),
-  `render` (the world painter), `hud` (HUD, minimap, menus), `shots` (the four
-  screenshot scenes) and `main` (boot, screens, the loop).
-- `screenshots/` — four real renders of the game, staged by `game/src/shots.js`.
-- `vendor/makefun-game.ts` — the kit's dossier library, unchanged.
+```
+main.ts            the hand-in program: copies game/ + screenshots/ out and
+                   writes dossier.json with the vendored library
+serve.ts           a small static server for local play
+game/index.html    the page — one canvas, one module script
+game/src/
+  main.js          boot, the loop, states, collisions, services, saving
+  city.js          Solstice Bay itself: coast, grid, road graph + BFS
+  render.js        the canvas painter: world, lights, weather
+  hud.js           HUD, GPS minimap, title/pause/end screens
+  vehicles.js      arcade car/boat physics and traffic AI
+  police.js        heat, stars, pursuit, roadblocks, busts
+  player.js        Jax on foot and behind the wheel; combat; shells
+  missions.js      Marisol's twelve jobs and their stage interpreter
+  sidejobs.js      taxi fares and boat-courier runs
+  pedestrians.js   the strolling, panicking population
+  effects.js       particles, skid marks, sky palette, weather
+  audio.js         the WebAudio synth: effects, engine, siren, music
+  input.js         keyboard and mouse state
+  config.js        every tunable number and name
+  random.js        seeded RNG and small math helpers
+  shots.js         the staged scenes behind screenshots/
+vendor/            the kit's makefun-game.ts, unchanged
+screenshots/       four real renders of the game, cover first
+```
+
+Everything in the game — city, names, story, art, sound — is original to
+this entry.

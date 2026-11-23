@@ -1,126 +1,85 @@
-// shots.js — the four screenshot scenes behind ?shot=cover|chase|marina|race.
-// Each stages real game state (the real player, real cars, the real wanted system)
-// and then lets the world run for a beat, so the frame is a moment of actual play,
-// identical for a given seed. main.js paints until window.__shotReady is set.
+// shots.js — the four screenshot scenes, staged by the game's own code and
+// rendered by its own renderer (the bounty asks for real renders, never
+// composites). Each scene sets the clock and weather, places Jax and the
+// vehicles, raises whatever HUD the moment needs, points the camera, and
+// main.js runs the world for a couple of seconds before flagging
+// window.__shotReady so the capture tool knows the frame is settled.
 
-import { CAR_MODELS, BOAT_MODELS, makeVehicle } from './vehicles.js';
-import { stepCopCar } from './police.js';
-import { makePed } from './pedestrians.js';
+import { MARINA, ISLAND } from './config.js';
+import { coastX } from './city.js';
+import { createVehicle } from './vehicles.js';
 
-const COUPE = CAR_MODELS[0];
-const SEDAN = CAR_MODELS[1];
-const CABRIO = CAR_MODELS[5];
-const RUNNER = BOAT_MODELS[0];
-
-function place(game, model, x, y, angle, color, driver, kind = 'car') {
-  const v = makeVehicle(model, x, y, angle, color ?? model.colors[0], kind);
-  v.driver = driver;
-  game.vehicles.push(v);
-  return v;
-}
-
-export function stageShot(game, name) {
-  const p = game.player;
-  game.screen = 'play';
-  if (name === 'chase') {
-    game.hour = 21.6;
-    game.weather = 'rain';
-    const car = place(game, COUPE, 1960, 1806, 0, '#e8641e', 'player');
-    car.speed = 236;
-    p.inVehicle = true;
-    p.vehicle = car;
-    p.x = car.x;
-    p.y = car.y;
-    const copA = place(game, CAR_MODELS[8], 1790, 1778, 0.06, '#1c2733', 'cop');
-    copA.livery = true;
-    copA.speed = 228;
-    const copB = place(game, CAR_MODELS[8], 1705, 1840, -0.05, '#1c2733', 'cop');
-    copB.livery = true;
-    copB.speed = 218;
-    game.police.heat = 430;
-    game.police.stars = 4;
-    game.shotObjective = { text: 'HOT PURSUIT — Lose the cops!', progress: '' };
-    game.cam.x = car.x - 60;
-    game.cam.y = car.y;
-    return {
-      t: 0,
-      step(dt) {
-        this.t += dt;
-        car.speed = Math.min(car.speed + 26 * dt, 252);
-        car.x += car.speed * dt;
-        car.y = 1806 + Math.sin(this.t * 1.7) * 7;
-        p.x = car.x;
-        p.y = car.y;
-        stepCopCar(game, copA, dt);
-        stepCopCar(game, copB, dt);
-        return this.t > 1.5;
-      },
-    };
-  }
-  if (name === 'marina') {
-    game.hour = 18.7;
-    game.weather = 'clear';
-    p.x = 3546;
-    p.y = 1500;
+export function setupShot(G, name) {
+  const p = G.player;
+  G.state = 'playing';
+  if (name === 'cover') {
+    // Golden hour on the Boardwalk shore drive: Jax beside his coupe.
+    G.hour = 18.05;
+    G.weather.force('clear');
+    const y = 3010;
+    const x = coastX(y) - 205;
+    const coupe = createVehicle('coupe', x + 52, y + 26, 0.12, { color: '#e8641e' });
+    G.vehicles.push(coupe);
+    p.x = x;
+    p.y = y + 30;
     p.angle = 0.5;
-    const boat = place(game, RUNNER, 3630, 1466, 0.35, '#ff7847', 'parked', 'boat');
-    boat.marked = true;
-    game.mission.dialogue.push({ who: 'Marisol', text: 'Three buoys in the bay, Jax. Empty them all, quiet as the tide.', t: 0 });
-    game.shotObjective = { text: 'Marina Blues — Empty the three bay buoys by boat', progress: 'Buoy 1 of 3' };
-    game.shotTarget = { x: 3980, y: 1180 };
-    game.cam.x = 3720;
-    game.cam.y = 1335;
-    game.cam.zoom = 0.94;
-    return { t: 0, step(dt) { this.t += dt; return this.t > 0.7; } };
-  }
-  if (name === 'race') {
-    game.hour = 12.5;
-    game.weather = 'clear';
-    const car = place(game, COUPE, 1800, 1960, -Math.PI / 2, '#e8641e', 'player');
-    p.inVehicle = true;
+    G.cameraOverride = { x: x + 90, y: y + 10, zoom: 1.12 };
+  } else if (name === 'chase') {
+    // Neon-night pursuit in the rain: four stars, two interceptors, a
+    // banner, and the coupe at speed on the Neon Mile.
+    G.hour = 22.4;
+    G.weather.force('storm');
+    const car = createVehicle('coupe', 1330, 720, 0, { color: '#c22f4e' });
+    car.driver = 'player';
+    car.vx = 330;
+    G.vehicles.push(car);
     p.vehicle = car;
     p.x = car.x;
     p.y = car.y;
-    const rivals = [
-      place(game, SEDAN, 1742, 2030, -Math.PI / 2, '#5b7fa6', 'parked'),
-      place(game, CABRIO, 1858, 2030, -Math.PI / 2, '#ff5da2', 'parked'),
-      place(game, COUPE, 1800, 2102, -Math.PI / 2, '#274b9f', 'parked'),
-    ];
-    game.shotObjective = { text: 'Pink Slip — Win the street race', progress: 'Checkpoint 1 of 8 · P4' };
-    game.shotTarget = { x: 1800, y: 1400 };
-    game.cam.x = 1800;
-    game.cam.y = 1850;
-    return {
-      t: 0,
-      step(dt) {
-        this.t += dt;
-        const go = this.t > 0.45;
-        for (const v of [car, ...rivals]) {
-          if (go) v.speed = Math.min(v.speed + 210 * dt, 236);
-          v.y -= v.speed * dt;
-        }
-        p.x = car.x;
-        p.y = car.y;
-        game.cam.y = 1850 - Math.max(0, this.t - 0.45) * 150;
-        return this.t > 1.3;
-      },
+    for (let i = 0; i < 2; i++) {
+      const cop = createVehicle('interceptor', 1130 - i * 130, 690 + i * 64, 0.1, { driver: 'police' });
+      cop.vx = 320;
+      G.vehicles.push(cop);
+      G.police.units.push(cop);
+    }
+    G.police.heat = 92;
+    G.police.syncStars();
+    G.shotBanner = { title: 'HOT PURSUIT', text: 'Lose the cops!' };
+    G.shotDrive = { throttle: 0.72, steer: 0, handbrake: false };
+    G.cameraOverride = { x: 1290, y: 715, zoom: 0.95 };
+  } else if (name === 'marina') {
+    // Sunset at the marina: Jax on the pier, the Tide Runner alongside, a
+    // courier objective lit and Marisol on the subtitle line.
+    G.hour = 18.55;
+    G.weather.force('clear');
+    const py = MARINA.pierYs[1];
+    const pierEnd = coastX(py) + MARINA.pierLen - 60;
+    const boat = createVehicle('speedboat', pierEnd + 46, py + 34, Math.PI, { color: '#e8e4da' });
+    G.vehicles.push(boat);
+    p.x = pierEnd - 30;
+    p.y = py;
+    p.angle = 0.9;
+    G.sidejobs.active = {
+      kind: 'courier', phase: 'deliver',
+      marker: { x: ISLAND.x - 330, y: ISLAND.y + 130 },
+      dest: { x: ISLAND.x - 330, y: ISLAND.y + 130 },
+      fare: 320, timeLeft: 999,
     };
+    G.hud.subtitle('Marisol: "The Tide Runner is fuelled and angry, Jax. Try not to scratch her."');
+    G.cameraOverride = { x: pierEnd - 60, y: py + 6, zoom: 1.12 };
+  } else if (name === 'race') {
+    // Pink Slip launch: the real mission stages the rivals and the first
+    // checkpoint; Jax joins the grid in a Kestrel of his own.
+    G.hour = 10.6;
+    G.weather.force('clear');
+    G.missions.start(G, 8);
+    const car = createVehicle('racer', 1470, 478, Math.PI, { color: '#e8b81e' });
+    car.driver = 'player';
+    G.vehicles.push(car);
+    p.vehicle = car;
+    p.x = car.x;
+    p.y = car.y;
+    p.angle = Math.PI;
+    G.cameraOverride = { x: 1500, y: 430, zoom: 1.0 };
   }
-  // cover: golden hour on the Boardwalk shore, Jax beside the orange coupe,
-  // the city at his back and the whole bay in front of him.
-  game.hour = 17.9;
-  game.weather = 'clear';
-  p.x = 3300;
-  p.y = 3090;
-  p.angle = -2.25;
-  const car = place(game, COUPE, 3152, 3026, 1.15, '#e8641e', 'parked');
-  car.marked = false;
-  for (let i = 0; i < 4; i += 1) {
-    const ped = makePed(3264 + (i % 2) * 44, 3010 + i * 52, game.rng);
-    game.peds.push(ped);
-  }
-  game.cam.x = 3260;
-  game.cam.y = 3030;
-  game.cam.zoom = 1.0;
-  return { t: 0, step(dt) { this.t += dt; return this.t > 0.7; } };
 }
