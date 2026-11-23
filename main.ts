@@ -1,40 +1,43 @@
-// Solstice Heat: Neon Tide — hand-in program for the make.fun gta6-01 bounty.
-//
-// The entry itself is a static browser game living in game/ (open
-// game/index.html, or serve the folder with `node serve.ts`). This program
-// does the hand-in only: it copies game/ and screenshots/ into the output
-// directory and writes dossier.json there using the kit's vendored library,
-// vendor/makefun-game.ts, untouched. Node 22, standard library only, no
-// network. When it runs outside the grader, MAKEFUN_OUTPUT_DIR names the
-// output directory instead of /output:
-//   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
+// main.ts — hands Solstice Heat: Neon Tide in to make.fun.
+// Copies game/ and screenshots/ into the output directory and writes the
+// dossier with the kit's own library, so the bytes the scorer rebuilds are
+// the bytes this program wrote. Runs on Node 22 with the standard library
+// only, twice in a row, and both runs write the same bytes.
 
-import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
 
-const repoDir = fileURLToPath(new URL('.', import.meta.url));
-const outputDir = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+const repoRoot = dirname(fileURLToPath(import.meta.url));
+const outputDir = process.env.MAKEFUN_OUTPUT_DIR || '/output';
 
-mkdirSync(outputDir, { recursive: true });
-cpSync(join(repoDir, 'game'), join(outputDir, 'game'), { recursive: true });
-mkdirSync(join(outputDir, 'screenshots'), { recursive: true });
-if (existsSync(join(repoDir, 'screenshots'))) {
-  cpSync(join(repoDir, 'screenshots'), join(outputDir, 'screenshots'), { recursive: true });
-}
-
-// The caps are the gate's own, handed to the dossier builder so an entry the
-// gate would turn away fails here first, on my machine, not on theirs:
-// 160 KiB of dossier text, no more than 4 screenshots of 256 KiB apiece,
-// no more than 993 game files or 48 MiB of game, no game path over 1000 bytes.
-const dossier = buildDossier(outputDir, {
+// The caps the gate scores with; passing them here makes this program fail
+// in exactly the places the scorer would refuse the entry.
+const GATE_CAPS = {
   text_max_bytes: 163840,
   screenshots: { max: 4, max_bytes: 262144 },
   game_max_files: 993,
   game_max_bytes: 50331648,
   game_path_max_bytes: 1000,
-});
-writeFileSync(join(outputDir, 'dossier.json'), dossier);
+};
 
-console.log('Solstice Heat: Neon Tide — game/, screenshots/ and dossier.json written to ' + outputDir);
+function handIn() {
+  for (const part of ['game', 'screenshots']) {
+    const from = join(repoRoot, part);
+    if (!existsSync(from)) throw new Error('missing ' + part + '/ in the repository');
+  }
+  rmSync(outputDir, { recursive: true, force: true });
+  mkdirSync(outputDir, { recursive: true });
+  cpSync(join(repoRoot, 'game'), join(outputDir, 'game'), { recursive: true });
+  cpSync(join(repoRoot, 'screenshots'), join(outputDir, 'screenshots'), { recursive: true });
+  const dossier = buildDossier(outputDir, GATE_CAPS);
+  writeFileSync(join(outputDir, 'dossier.json'), dossier);
+  // buildDossier returns raw bytes (a Uint8Array), so decode before parsing.
+  const summary = JSON.parse(new TextDecoder().decode(dossier));
+  const images = summary.images ? Object.keys(summary.images).length : 0;
+  console.log('dossier written: ' + images + ' screenshots, '
+    + dossier.length + ' bytes');
+}
+
+handIn();

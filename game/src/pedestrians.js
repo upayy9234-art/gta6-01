@@ -1,130 +1,133 @@
-// pedestrians.js — the people of Solstice Bay. They stroll the pavements
-// (the strips just off the roads), chat in pairs, and panic properly:
-// a gunshot, a crash or a car on the pavement scatters them, and a car that
-// reaches one knocks them down. Downed peds get up again after a while
-// unless the hit was hard.
+// pedestrians.js — the people of Solstice Bay. They stroll the sidewalks,
+// mind their own business, and remember what they see: a crime committed in
+// front of witnesses is what turns heat into stars (police.js does that part;
+// peds here raise the alarm flag on the game state).
 
-import { clamp } from './random.js';
-import { isWater, isRoad } from './city.js';
+import { rand, choice, clamp, dist, angleTo, angleDiff } from './random.js';
+import { isWater } from './city.js';
 
-const SHIRTS = ['#d95f4b', '#4b7fd9', '#4bd97a', '#d9c84b', '#b44bd9', '#d9d9d9', '#4bd0d9', '#d98a4b'];
+const SHIRTS = ['#ef6461', '#f2c14e', '#6fb3e0', '#95d5b2', '#e5989b', '#ffc8dd', '#a2d2ff', '#fdffb6', '#caffbf', '#bdb2ff'];
+const SKINS = ['#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#ffdbac'];
 
-export function createPed(x, y, rng) {
+export function makePed(x, y) {
   return {
-    x, y,
-    angle: rng.range(0, Math.PI * 2),
-    speed: rng.range(38, 62),
-    state: 'walk', // walk | panic | down
-    timer: rng.range(1, 5),
-    shirt: rng.pick(SHIRTS),
-    skin: rng.pick(['#f0c8a0', '#c88a5a', '#8a5a34', '#f5d7b8']),
-    health: 30,
-    tx: x, ty: y,
+    x, y, angle: rand(0, Math.PI * 2),
+    speed: rand(38, 62), runSpeed: rand(150, 185),
+    shirt: choice(SHIRTS), skin: choice(SKINS),
+    state: 'walk',          // walk | flee | down | witness
+    target: null, panic: 0, health: 30,
+    walkCycle: rand(0, 6), witnessTimer: 0, dead: false,
   };
 }
 
-export function spawnPeds(G, count) {
-  const peds = [];
-  let guard = 0;
-  while (peds.length < count && guard++ < count * 30) {
-    const x = G.rng.range(140, 2380);
-    const y = G.rng.range(140, 3460);
-    // Pavements: near a road but not on it, and never inside a building.
-    if (isWater(x, y) || isRoad(x, y)) continue;
-    if (G.city.buildingPush(x, y, 16)) continue;
-    peds.push(createPed(x, y, G.rng));
-  }
-  // A few beachgoers and island walkers too.
-  for (let i = 0; i < 8; i++) {
-    const y = G.rng.range(300, 3300);
-    peds.push(createPed(2430 - G.rng.range(0, 60), y, G.rng));
-  }
-  return peds;
+export function spawnPed(G, nearX, nearY) {
+  // Peds hug the sidewalks: spawn near a road node, offset to the kerb.
+  const node = G.city.nearestNode(nearX + rand(-650, 650), nearY + rand(-650, 650));
+  if (!node) return null;
+  const x = node.x + rand(-70, 70), y = node.y + rand(-70, 70);
+  if (isWater(x, y)) return null;
+  const ped = makePed(x, y);
+  ped.target = pickWalkTarget(G, ped);
+  return ped;
 }
 
-// Something frightening happened at (x, y): nearby peds run from it, and
-// anyone close enough to see it is a witness for the police.
-export function scarePeds(G, x, y, radius) {
-  let witnessed = false;
-  for (const p of G.peds) {
-    const d = Math.hypot(p.x - x, p.y - y);
-    if (d < radius) {
-      if (p.state === 'walk') {
-        p.state = 'panic';
-        p.timer = 2.6;
-        p.angle = Math.atan2(p.y - y, p.x - x) + (Math.random() - 0.5) * 0.7;
+function pickWalkTarget(G, ped) {
+  const node = G.city.nearestNode(ped.x + rand(-420, 420), ped.y + rand(-420, 420));
+  if (!node) return { x: ped.x, y: ped.y };
+  return { x: node.x + rand(-58, 58), y: node.y + rand(-58, 58) };
+}
+
+// Something scary happened at (x, y): nearby peds flee, and the closest ones
+// become witnesses who will report it if the police module asks.
+export function scarePeds(G, x, y, radius, crimeKind) {
+  let witnesses = 0;
+  for (const ped of G.peds) {
+    if (ped.state === 'down') continue;
+    const d = dist(ped.x, ped.y, x, y);
+    if (d > radius) continue;
+    ped.state = 'flee';
+    ped.panic = rand(1.6, 3.2);
+    ped.angle = angleTo(x, y, ped.x, ped.y);
+    if (d < 240) {
+      witnesses++;
+      if (crimeKind) G.pendingWitness = { kind: crimeKind, x, y, at: G.time };
+    }
+  }
+  return witnesses;
+}
+
+export function hurtPed(G, ped, damage, angle) {
+  if (ped.state === 'down') return;
+  ped.health -= damage;
+  G.fx.burst(ped.x, ped.y, { n: 6, color: '#d94f4f', speed: 120, life: 0.4, size: 2.6 });
+  if (ped.health <= 0) {
+    ped.state = 'down';
+    ped.dead = true;
+    scarePeds(G, ped.x, ped.y, 260, null);
+  } else {
+    ped.state = 'flee';
+    ped.panic = 2.6;
+    ped.angle = angle + Math.PI + rand(-0.5, 0.5);
+  }
+}
+
+export function updatePeds(G, dt) {
+  const px = G.player.x, py = G.player.y;
+  for (let i = G.peds.length - 1; i >= 0; i--) {
+    const ped = G.peds[i];
+    if (ped.state === 'down') continue;
+    ped.walkCycle += dt * (ped.state === 'flee' ? 11 : 6);
+
+    if (ped.state === 'flee') {
+      ped.panic -= dt;
+      ped.x += Math.cos(ped.angle) * ped.runSpeed * dt;
+      ped.y += Math.sin(ped.angle) * ped.runSpeed * dt;
+      if (Math.random() < dt * 2) ped.angle += rand(-0.7, 0.7);
+      if (ped.panic <= 0) { ped.state = 'walk'; ped.target = pickWalkTarget(G, ped); }
+    } else {
+      if (!ped.target || dist(ped.x, ped.y, ped.target.x, ped.target.y) < 12) {
+        ped.target = pickWalkTarget(G, ped);
       }
-      if (d < 300) witnessed = true;
-    }
-  }
-  return witnessed;
-}
-
-export function hurtPed(G, p, damage, angle) {
-  p.health -= damage;
-  if (p.health <= 0 && p.state !== 'down') {
-    p.state = 'down';
-    p.timer = 9;
-    p.angle = angle || p.angle;
-  } else if (p.state === 'walk') {
-    p.state = 'panic';
-    p.timer = 2.2;
-  }
-}
-
-export function stepPeds(G, dt) {
-  for (const p of G.peds) {
-    if (p.hostile) continue; // mission lookouts are stepped by missions.js
-    if (p.state === 'down') {
-      p.timer -= dt;
-      if (p.timer <= 0) {
-        p.state = 'walk';
-        p.health = 30;
-      }
-      continue;
-    }
-    p.timer -= dt;
-    if (p.state === 'panic') {
-      movePed(G, p, p.speed * 2.6, dt);
-      if (p.timer <= 0) p.state = 'walk';
-      continue;
-    }
-    // Strolling: pick a nearby pavement point and amble to it.
-    if (p.timer <= 0 || Math.hypot(p.tx - p.x, p.ty - p.y) < 12) {
-      p.timer = G.rng.range(3, 8);
-      for (let tries = 0; tries < 8; tries++) {
-        const tx = p.x + G.rng.range(-260, 260);
-        const ty = p.y + G.rng.range(-260, 260);
-        if (!isWater(tx, ty) && !G.city.buildingPush(tx, ty, 14)) {
-          p.tx = tx;
-          p.ty = ty;
+      const want = angleTo(ped.x, ped.y, ped.target.x, ped.target.y);
+      ped.angle += angleDiff(ped.angle, want) * Math.min(1, dt * 5);
+      ped.x += Math.cos(ped.angle) * ped.speed * dt;
+      ped.y += Math.sin(ped.angle) * ped.speed * dt;
+      // Dodge out of the way of an oncoming car.
+      for (const v of G.vehicles) {
+        if (v.wreck) continue;
+        const d = dist(ped.x, ped.y, v.x, v.y);
+        if (d < 44 && Math.hypot(v.vx, v.vy) > 90) {
+          ped.state = 'flee';
+          ped.panic = 1.1;
+          ped.angle = angleTo(v.x, v.y, ped.x, ped.y);
           break;
         }
       }
     }
-    const want = Math.atan2(p.ty - p.y, p.tx - p.x);
-    let delta = want - p.angle;
-    while (delta > Math.PI) delta -= Math.PI * 2;
-    while (delta < -Math.PI) delta += Math.PI * 2;
-    p.angle += clamp(delta, -3.4 * dt, 3.4 * dt);
-    movePed(G, p, p.speed, dt);
-  }
-}
 
-function movePed(G, p, speed, dt) {
-  const nx = p.x + Math.cos(p.angle) * speed * dt;
-  const ny = p.y + Math.sin(p.angle) * speed * dt;
-  if (isWater(nx, ny)) {
-    p.angle += Math.PI * 0.9;
-    return;
+    // Keep peds out of the water and out of walls.
+    if (isWater(ped.x, ped.y)) {
+      ped.x -= Math.cos(ped.angle) * ped.runSpeed * dt * 1.2;
+      ped.y -= Math.sin(ped.angle) * ped.runSpeed * dt * 1.2;
+      ped.target = pickWalkTarget(G, ped);
+    }
+    const resolved = G.city.collideBuildings(ped.x, ped.y, 10);
+    ped.x = clamp(resolved[0], 12, 4788);
+    ped.y = clamp(resolved[1], 12, 3588);
+
+    // Run over? A fast vehicle passing through a ped puts them down.
+    for (const v of G.vehicles) {
+      if (v.wreck) continue;
+      const sp = Math.hypot(v.vx, v.vy);
+      if (sp < 70) continue;
+      if (dist(ped.x, ped.y, v.x, v.y) < v.def.size[1] * 0.8 + 8) {
+        hurtPed(G, ped, sp > 220 ? 40 : 22, v.angle);
+        if (v.driver === 'player') G.onPlayerHitPed(ped, sp);
+        break;
+      }
+    }
+
+    // Despawn the far ones; the spawner in main keeps the near count up.
+    if (dist(ped.x, ped.y, px, py) > 1150) G.peds.splice(i, 1);
   }
-  const push = G.city.buildingPush(nx, ny, 12);
-  if (push) {
-    p.x = nx + push.x;
-    p.y = ny + push.y;
-    p.angle += 1.7;
-    return;
-  }
-  p.x = clamp(nx, 16, 4784);
-  p.y = clamp(ny, 16, 3584);
 }

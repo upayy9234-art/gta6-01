@@ -1,230 +1,258 @@
-// police.js — the Solstice Bay PD. Crime raises heat; heat becomes stars;
-// stars bring interceptors, then foot officers, roadblocks and gunfire.
-// Heat decays while nobody in uniform can see the player, and hiding long
-// enough loses the tail entirely. Officers shoot only at four stars and
-// above, and a bust needs the player slow, close and seen — run and it
-// drains away.
+// police.js — the SBPD and the wanted system. Crimes add heat when someone
+// sees them (a fleeing witness, or an officer in range). Heat makes stars,
+// stars make interceptors, roadblocks and foot officers, and all of them
+// want one thing: the player stopped, boxed in, and busted.
 
-import { clamp } from './random.js';
-import { createVehicle, controlToward, stepVehicle, damageVehicle } from './vehicles.js';
-import { hurtPed } from './pedestrians.js';
+import { WANTED } from './config.js';
+import { rand, clamp, dist, angleTo, angleDiff } from './random.js';
+import { makeVehicle } from './vehicles.js';
 
-const STAR_HEAT = [0, 12, 30, 55, 85, 120]; // heat needed for 1..5 stars
+export function createWanted() {
+  return {
+    heat: 0, stars: 0,
+    seen: false, lastSeenX: 0, lastSeenY: 0, unseenFor: 0,
+    bust: 0, escaped: false, roadblockStars: 0,
+  };
+}
 
-// Can an officer at (ox, oy) see the point (x, y)? Buildings block sight;
-// range shrinks at night and in rain.
-export function canSee(G, ox, oy, x, y) {
-  const d = Math.hypot(x - ox, y - oy);
-  let range = 430;
-  if (G.weather.rain > 0.5) range *= 0.75;
-  if (d > range) return false;
-  const steps = Math.ceil(d / 46);
-  for (let i = 1; i < steps; i++) {
-    const sx = ox + ((x - ox) * i) / steps;
-    const sy = oy + ((y - oy) * i) / steps;
-    if (G.city.buildingPush(sx, sy, 4)) return false;
+export function starsForHeat(heat) {
+  let s = 0;
+  for (let i = 0; i < WANTED.thresholds.length; i++) {
+    if (heat >= WANTED.thresholds[i]) s = i;
   }
+  return s;
+}
+
+// A crime happened at (x, y). It only counts if somebody saw it: a witness
+// count from pedestrians, or an officer already close enough to see.
+export function reportCrime(G, kind, x, y, witnesses) {
+  const officerNear = G.vehicles.some((v) => v.driver === 'police' && dist(v.x, v.y, x, y) < 430)
+    || G.officers.some((o) => dist(o.x, o.y, x, y) < 380);
+  if (!witnesses && !officerNear) return false;
+  const points = WANTED.crimes[kind] || 10;
+  G.wanted.heat = Math.min(460, G.wanted.heat + points);
+  G.wanted.lastSeenX = x;
+  G.wanted.lastSeenY = y;
+  G.wanted.unseenFor = 0;
+  G.wanted.escaped = false;
   return true;
 }
 
-export function createPoliceSystem() {
-  const P = {
-    heat: 0,
-    stars: 0,
-    seen: 0,
-    unseen: 99,
-    bust: 0,
-    units: [],
-    officers: [],
-    blockT: 0,
-    shotT: 0,
-
-    // A crime, reported. Unwitnessed crime still warms the air a little —
-    // someone always hears a crash — but witnesses are what bring stars.
-    report(G, severity, x, y, witnessed) {
-      const near = G.peds.some((p) => Math.hypot(p.x - x, p.y - y) < 320);
-      const seenByCop = P.units.some((u) => Math.hypot(u.x - x, u.y - y) < 460) || P.officers.some((o) => Math.hypot(o.x - x, o.y - y) < 380);
-      const gain = severity * (witnessed || near || seenByCop ? 1 : 0.3);
-      P.heat = Math.min(150, P.heat + gain);
-      P.syncStars();
-    },
-
-    syncStars() {
-      let s = 0;
-      for (let i = 0; i < STAR_HEAT.length; i++) if (P.heat >= STAR_HEAT[i]) s = i;
-      P.stars = s;
-    },
-
-    clear() {
-      P.heat = 0;
-      P.stars = 0;
-      P.bust = 0;
-      P.unseen = 99;
-      for (const u of P.units) u.driver = 'traffic'; // they give up and patrol off
-      P.units = [];
-      P.officers = [];
-    },
-
-    wantedLevel() {
-      return P.stars;
-    },
-
-    update(G, dt) {
-      const player = G.player;
-      const px = player.vehicle ? player.vehicle.x : player.x;
-      const py = player.vehicle ? player.vehicle.y : player.y;
-
-      // Sight: any unit or officer with line of sight counts.
-      let visible = false;
-      for (const u of P.units) if (canSee(G, u.x, u.y, px, py)) { visible = true; break; }
-      if (!visible) for (const o of P.officers) if (canSee(G, o.x, o.y, px, py)) { visible = true; break; }
-      if (P.stars > 0 && P.units.length === 0 && P.officers.length === 0) visible = false;
-
-      if (visible) {
-        P.seen += dt;
-        P.unseen = 0;
-        P.heat = Math.min(150, P.heat + dt * 1.1);
-      } else {
-        P.unseen += dt;
-        P.seen = 0;
-        if (P.stars > 0) P.heat -= dt * (P.unseen > 4 ? 3.4 : 0.8);
-        if (P.heat <= 0.2 && P.stars > 0) {
-          P.heat = 0;
-          G.hud.notify('You lost the cops.');
-          G.audio.play('objective');
-        }
-      }
-      P.syncStars();
-
-      // Force size follows the stars.
-      const wantCars = P.stars === 0 ? 0 : [0, 1, 2, 3, 4, 5][P.stars];
-      const wantFeet = P.stars >= 3 ? P.stars - 1 : 0;
-      spawnUnits(G, P, wantCars, px, py);
-      spawnOfficers(G, P, wantFeet, px, py);
-
-      // Pursuit: aim ahead of the player's motion; ram at close quarters.
-      // Roadblock cars hold their line and only settle.
-      for (const u of P.units) {
-        if (u.parked) {
-          stepVehicle(G, u, { throttle: 0, steer: 0, handbrake: true }, dt);
-          continue;
-        }
-        const lead = player.vehicle ? 0.55 : 0.25;
-        const tx = px + (player.vehicle ? player.vehicle.vx : 0) * lead;
-        const ty = py + (player.vehicle ? player.vehicle.vy : 0) * lead;
-        const control = controlToward(u, tx, ty, { reach: 30 });
-        if (Math.hypot(px - u.x, py - u.y) < 56) control.throttle = 1;
-        stepVehicle(G, u, control, dt);
-      }
-      // Officers on foot chase and, at 4+ stars, shoot.
-      P.shotT -= dt;
-      for (const o of P.officers) {
-        const d = Math.hypot(px - o.x, py - o.y);
-        const want = Math.atan2(py - o.y, px - o.x);
-        o.angle = want;
-        if (d > 130) {
-          o.x += Math.cos(want) * 150 * dt;
-          o.y += Math.sin(want) * 150 * dt;
-        }
-        if (P.stars >= 4 && d < 330 && P.shotT <= 0 && canSee(G, o.x, o.y, px, py)) {
-          P.shotT = 0.55;
-          G.fx.muzzle(o.x, o.y, want);
-          G.audio.play('shot');
-          if (Math.random() < 0.42) G.hurtPlayer(7, want);
-        }
-        if (o.health <= 0) o.dead = true;
-      }
-      P.officers = P.officers.filter((o) => !o.dead);
-
-      // Roadblocks at 3+ stars: parked interceptors across the road ahead.
-      P.blockT -= dt;
-      if (P.stars >= 3 && P.blockT <= 0) {
-        P.blockT = 26;
-        makeRoadblock(G, P, px, py);
-      }
-
-      // The bust meter: slow + close + seen fills it; speed or cover drains.
-      const playerSpeed = player.vehicle ? Math.hypot(player.vehicle.vx, player.vehicle.vy) : (player.moving ? 150 : 0);
-      const nearest = nearestCop(G, P, px, py);
-      if (visible && playerSpeed < 55 && nearest < 120) P.bust += dt * 0.5;
-      else P.bust = Math.max(0, P.bust - dt * 0.65);
-      if (P.bust >= 1) {
-        P.bust = 0;
-        G.events.push({ type: 'busted' });
-      }
-
-      // Sirens follow the nearest chase.
-      G.audio.setSiren(P.stars > 0 && nearest < 640);
-    },
-  };
-  return P;
+// Missions can force a wanted level (survival stages).
+export function forceHeat(G, stars) {
+  const target = WANTED.thresholds[stars] + 12;
+  if (G.wanted.heat < target) G.wanted.heat = target;
+  G.wanted.unseenFor = 0;
+  G.wanted.lastSeenX = G.player.x;
+  G.wanted.lastSeenY = G.player.y;
 }
 
-function nearestCop(G, P, px, py) {
-  let best = Infinity;
-  for (const u of P.units) best = Math.min(best, Math.hypot(u.x - px, u.y - py));
-  for (const o of P.officers) best = Math.min(best, Math.hypot(o.x - px, o.y - py));
-  return best;
-}
-
-function spawnUnits(G, P, want, px, py) {
-  // No stars: the chase is over — units peel off and become traffic.
-  if (want === 0) {
-    for (const u of P.units) u.driver = 'traffic';
-    P.units = [];
-    return;
+function spawnInterceptor(G) {
+  const p = G.player;
+  for (let tries = 0; tries < 8; tries++) {
+    const node = G.city.nearestNode(p.x + rand(-760, 760), p.y + rand(-760, 760));
+    if (!node) continue;
+    const d = dist(node.x, node.y, p.x, p.y);
+    if (d < 430 || d > 900) continue;
+    const v = makeVehicle('interceptor', node.x, node.y, rand(0, 6.28), 'police');
+    v.cruiseSpeed = 1;
+    G.vehicles.push(v);
+    return v;
   }
-  // Retire units that fell too far behind.
-  for (let i = P.units.length - 1; i >= 0; i--) {
-    const u = P.units[i];
-    if (Math.hypot(u.x - px, u.y - py) > 1500 || u.dead) {
-      u.driver = 'traffic';
-      const gi = G.vehicles.indexOf(u);
-      if (gi !== -1) G.vehicles.splice(gi, 1);
-      P.units.splice(i, 1);
+  return null;
+}
+
+function spawnOfficer(G) {
+  const p = G.player;
+  const a = rand(0, Math.PI * 2);
+  const x = p.x + Math.cos(a) * rand(300, 420);
+  const y = p.y + Math.sin(a) * rand(300, 420);
+  G.officers.push({ x, y, angle: 0, health: 46, speed: rand(150, 172), state: 'chase', shootCd: rand(0.4, 1.4), walkCycle: 0 });
+}
+
+function spawnRoadblock(G) {
+  const p = G.player;
+  const heading = p.vehicle ? p.vehicle.angle : p.angle;
+  const tx = p.x + Math.cos(heading) * 560;
+  const ty = p.y + Math.sin(heading) * 560;
+  const node = G.city.nearestNode(tx, ty);
+  if (!node) return;
+  const across = heading + Math.PI / 2;
+  for (const off of [-30, 30]) {
+    const v = makeVehicle('interceptor', node.x + Math.cos(across) * off, node.y + Math.sin(across) * off, across, 'police');
+    v.parked = true;
+    v.cruiseSpeed = 0;
+    G.vehicles.push(v);
+    G.roadblocks.push(v);
+  }
+  G.wanted.roadblockStars = G.wanted.stars;
+}
+
+export function updatePolice(G, dt) {
+  const W = G.wanted;
+  const p = G.player;
+
+  // Visibility: any unit with eyes on the player refreshes the search.
+  let seen = false;
+  for (const v of G.vehicles) {
+    if (v.driver === 'police' && dist(v.x, v.y, p.x, p.y) < 500) seen = true;
+  }
+  for (const o of G.officers) {
+    if (dist(o.x, o.y, p.x, p.y) < 400) seen = true;
+  }
+  W.seen = seen;
+  if (seen) {
+    W.unseenFor = 0;
+    W.lastSeenX = p.x; W.lastSeenY = p.y;
+  } else {
+    W.unseenFor += dt;
+    if (W.heat > 0) W.heat = Math.max(0, W.heat - WANTED.decayPerSec * dt);
+    if (W.heat <= 0 && W.stars > 0 && W.unseenFor > WANTED.searchTime) {
+      W.stars = 0;
+      W.escaped = true;
+      G.notify('You lost the SBPD. Heat cleared.', '#7fe8a8');
+      G.audio.pickup();
+      clearPolice(G);
     }
   }
-  let guard = 0;
-  while (P.units.length < want && guard++ < 8) {
-    // Spawn on a road, off-screen but close.
-    const a = G.rng.range(0, Math.PI * 2);
-    const p = G.city.randomRoadPoint(G.rng);
-    if (Math.hypot(p.x - px, p.y - py) < 560) continue;
-    if (Math.hypot(p.x - px, p.y - py) > 1200) continue;
-    const u = createVehicle('interceptor', p.x, p.y, a, { driver: 'police' });
-    G.vehicles.push(u);
-    P.units.push(u);
+  // Stars follow heat down as it decays, but hold while a search is live:
+  // heat at zero with the search timer still running keeps the last level
+  // until the escape branch above clears it.
+  const heatStars = starsForHeat(W.heat);
+  if (heatStars > 0) W.stars = heatStars;
+  else if (W.unseenFor > WANTED.searchTime) W.stars = 0;
+
+  const cops = G.vehicles.filter((v) => v.driver === 'police' && !v.parked);
+  const desired = [0, 1, 2, 3, 4, 6][W.stars] || 0;
+  if (W.stars > 0 && cops.length < desired) {
+    if (Math.random() < dt * 1.4) spawnInterceptor(G);
+  }
+  if (W.stars >= 3 && G.officers.length < W.stars - 1) {
+    if (Math.random() < dt * 1.1) spawnOfficer(G);
+  }
+  if (W.stars >= 3 && W.roadblockStars < W.stars && Math.random() < dt * 0.5) {
+    spawnRoadblock(G);
+  }
+  if (W.stars < 3) {
+    for (const v of G.roadblocks) v.parked = false;
+    G.roadblocks.length = 0;
+    W.roadblockStars = 0;
+  }
+
+  // Despawn distant units so the chase can breathe.
+  for (let i = G.vehicles.length - 1; i >= 0; i--) {
+    const v = G.vehicles[i];
+    if (v.driver === 'police' && !v.parked && dist(v.x, v.y, p.x, p.y) > 1250) G.vehicles.splice(i, 1);
+  }
+  for (let i = G.officers.length - 1; i >= 0; i--) {
+    if (dist(G.officers[i].x, G.officers[i].y, p.x, p.y) > 1250) G.officers.splice(i, 1);
+  }
+
+  drivePolice(G, dt);
+  updateOfficers(G, dt);
+  updateBust(G, dt);
+  G.audio.siren(W.stars > 0 && (cops.length > 0 || G.officers.length > 0));
+}
+
+function drivePolice(G, dt) {
+  const p = G.player;
+  const W = G.wanted;
+  const units = G.vehicles.filter((v) => v.driver === 'police');
+  let idx = 0;
+  for (const v of units) {
+    if (v.parked) { v.control.throttle = 0; v.control.steer = 0; continue; }
+    if (v.health <= 0) { v.control.throttle = 0; continue; }
+    // Box-in behaviour: the lead car rams the player's position, the next
+    // aims ahead of the player, the rest aim at the flanks.
+    let tx = W.seen ? p.x : W.lastSeenX;
+    let ty = W.seen ? p.y : W.lastSeenY;
+    if (p.vehicle && idx === 1) {
+      tx += Math.cos(p.vehicle.angle) * 130;
+      ty += Math.sin(p.vehicle.angle) * 130;
+    } else if (p.vehicle && idx >= 2) {
+      const side = idx % 2 === 0 ? 1 : -1;
+      tx += Math.cos(p.vehicle.angle + Math.PI / 2) * side * 90;
+      ty += Math.sin(p.vehicle.angle + Math.PI / 2) * side * 90;
+    }
+    const want = angleTo(v.x, v.y, tx, ty);
+    const diff = angleDiff(v.angle, want);
+    v.control.steer = clamp(diff * 2.6, -1, 1);
+    const d = dist(v.x, v.y, tx, ty);
+    const playerSlow = !p.vehicle || Math.hypot(p.vehicle.vx, p.vehicle.vy) < 40;
+    if (d < 60 && playerSlow) {
+      v.control.throttle = 0;             // sit on the player: bust pressure
+    } else if (Math.abs(diff) > 2.2 && d < 120) {
+      v.control.throttle = -0.7;          // reverse out of a bad angle
+    } else {
+      v.control.throttle = 1;
+    }
+    v.control.handbrake = Math.abs(diff) > 0.9 && d < 200;
+    v.sirenPhase += dt * 9;
+    idx++;
   }
 }
 
-function spawnOfficers(G, P, want, px, py) {
-  for (let i = P.officers.length - 1; i >= 0; i--) {
-    if (Math.hypot(P.officers[i].x - px, P.officers[i].y - py) > 1300) P.officers.splice(i, 1);
-  }
-  let guard = 0;
-  while (P.officers.length < want && guard++ < 8) {
-    const a = G.rng.range(0, Math.PI * 2);
-    const d = G.rng.range(420, 560);
-    const x = px + Math.cos(a) * d;
-    const y = py + Math.sin(a) * d;
-    if (x < 20 || y < 20 || x > 4780 || y > 3580) continue;
-    P.officers.push({ x, y, angle: 0, health: 40, shirt: '#1c2f57', skin: '#c88a5a', state: 'walk', timer: 0, tx: x, ty: y, speed: 150 });
-  }
-}
-
-function makeRoadblock(G, P, px, py) {
-  // Two interceptors parked across the road in the player's heading.
-  const heading = G.player.vehicle ? G.player.vehicle.angle : G.player.angle;
-  const bx = px + Math.cos(heading) * 620;
-  const by = py + Math.sin(heading) * 620;
-  const node = G.city.nearestNode(bx, by);
-  if (!node) return;
-  for (let i = -1; i <= 1; i += 2) {
-    const u = createVehicle('interceptor', node.x + i * 30, node.y + (i > 0 ? 14 : -14), heading + Math.PI / 2, { driver: 'police' });
-    u.parked = true;
-    G.vehicles.push(u);
-    P.units.push(u);
+function updateOfficers(G, dt) {
+  const p = G.player;
+  const W = G.wanted;
+  for (let i = G.officers.length - 1; i >= 0; i--) {
+    const o = G.officers[i];
+    if (o.health <= 0) { G.officers.splice(i, 1); continue; }
+    o.walkCycle += dt * 9;
+    const tx = W.seen ? p.x : W.lastSeenX;
+    const ty = W.seen ? p.y : W.lastSeenY;
+    const d = dist(o.x, o.y, tx, ty);
+    if (d > 34) {
+      o.angle = angleTo(o.x, o.y, tx, ty);
+      o.x += Math.cos(o.angle) * o.speed * dt;
+      o.y += Math.sin(o.angle) * o.speed * dt;
+    }
+    const resolved = G.city.collideBuildings(o.x, o.y, 10);
+    o.x = resolved[0]; o.y = resolved[1];
+    // Gunfire at four stars and up, when the player is on foot and close.
+    o.shootCd -= dt;
+    if (W.stars >= 4 && !p.vehicle && dist(o.x, o.y, p.x, p.y) < 265 && o.shootCd <= 0) {
+      o.shootCd = rand(0.7, 1.5);
+      G.fx.muzzle(o.x, o.y, angleTo(o.x, o.y, p.x, p.y));
+      G.audio.shot();
+      if (Math.random() < 0.42) G.hurtPlayer(9, o.x, o.y);
+    }
   }
 }
 
-export { damageVehicle, hurtPed };
+function updateBust(G, dt) {
+  const p = G.player;
+  const W = G.wanted;
+  if (W.stars === 0) { W.bust = 0; return; }
+  const playerSpeed = p.vehicle ? Math.hypot(p.vehicle.vx, p.vehicle.vy) : Math.hypot(p.vx || 0, p.vy || 0);
+  let pressure = false;
+  if (playerSpeed < 42) {
+    for (const v of G.vehicles) {
+      if (v.driver === 'police' && dist(v.x, v.y, p.x, p.y) < 74) pressure = true;
+    }
+    for (const o of G.officers) {
+      if (dist(o.x, o.y, p.x, p.y) < 40) pressure = true;
+    }
+  }
+  if (pressure) {
+    W.bust += dt;
+    if (W.bust >= 2.6) {
+      W.bust = 0;
+      G.onBusted();
+    }
+  } else {
+    W.bust = Math.max(0, W.bust - dt * 1.6);
+  }
+}
+
+export function clearPolice(G) {
+  for (let i = G.vehicles.length - 1; i >= 0; i--) {
+    if (G.vehicles[i].driver === 'police') G.vehicles.splice(i, 1);
+  }
+  G.officers.length = 0;
+  G.roadblocks.length = 0;
+  G.wanted.heat = 0;
+  G.wanted.stars = 0;
+  G.wanted.roadblockStars = 0;
+  G.audio.siren(false);
+}

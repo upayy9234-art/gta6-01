@@ -1,397 +1,428 @@
-// main.js — Solstice Heat: Neon Tide. Boots the city, the people, the law
-// and Jax; runs the loop; owns the state machine (title, playing, paused,
-// wasted, busted), vehicle collisions, the garage/clinic/armoury services,
-// saving to localStorage, and the screenshot mode (?shot=<name>) that
-// stages scenes for the maker's own captures.
+// main.js — boots Solstice Heat: Neon Tide, owns the game state object G,
+// runs the loop, the state machine (title / playing / paused / wasted /
+// busted), the spawners, saving, and the crime hooks the other modules
+// call when the player does something the SBPD would care about.
 
-import { START_HOUR, DAY_LENGTH, PRICES, SAVE_KEY, MARINA } from './config.js';
-import { Rng } from './random.js';
-import { generateCity, coastX } from './city.js';
-import { createInput } from './input.js';
-import { createAudio } from './audio.js';
-import { createEffects, createWeather } from './effects.js';
-import { createPlayer, stepPlayer, hurtPlayer } from './player.js';
-import { createPoliceSystem } from './police.js';
-import { createMissionSystem } from './missions.js';
-import { createSideJobs } from './sidejobs.js';
-import { createHud } from './hud.js';
-import { createRenderer } from './render.js';
-import { createVehicle, spawnTraffic, stepTraffic, damageVehicle } from './vehicles.js';
-import { spawnPeds, stepPeds, hurtPed, scarePeds } from './pedestrians.js';
-import { setupShot } from './shots.js';
+import { WORLD, TIME, SAVE_KEY } from './config.js';
+import { clamp, dist } from './random.js';
+import { Input } from './input.js';
+import { AudioEngine } from './audio.js';
+import { City, poi } from './city.js';
+import { Effects, Weather } from './effects.js';
+import { createPlayer, updatePlayer, hurtPlayer, exitVehicle } from './player.js';
+import { makeVehicle, stepVehicle, collideVehicles, spawnTrafficCar, updateTraffic, spawnBoat, updateBoat } from './vehicles.js';
+import { spawnPed, updatePeds } from './pedestrians.js';
+import { createWanted, updatePolice, clearPolice, reportCrime } from './police.js';
+import { Missions } from './missions.js';
+import { SideJobs } from './sidejobs.js';
+import { render } from './render.js';
+import { drawHUD } from './hud.js';
+import { isShotMode, shotNumber, setupShot, driveShot } from './shots.js';
 
-const canvas = document.getElementById('game');
-const statusEl = document.getElementById('status');
-const params = new URLSearchParams(location.search);
-const seed = Number(params.get('seed') ?? 7) || 7;
-const shotName = params.get('shot');
+const VIEW_W = 1280;
+const VIEW_H = 720;
 
-const rng = new Rng(seed);
-const city = generateCity(seed);
-const player = createPlayer(430, 2130);
+export function createGame(canvas) {
+  const G = {
+    canvas, ctx: canvas.getContext('2d'),
+    W: VIEW_W, H: VIEW_H,
+    state: 'title',
+    time: 0, hour: TIME.startHour,
+    camera: { x: 900, y: 900 },
+    mouseWorld: { x: 0, y: 0 },
+    notifications: [],
+    prompt: null, objective: null, sideObjective: null, missionMarker: null,
+    districtToast: null, pendingWitness: null,
+    vehicles: [], peds: [], hostiles: [], officers: [], roadblocks: [],
+    freezeHour: false, cameraLocked: false,
+    shotMode: false, shotN: 0, frame: 0, shotReadyAt: 0,
+    stateTimer: 0, spawnTimer: 0, lastDistrict: '',
+    titlePan: 0,
+  };
 
-const G = {
-  rng,
-  city,
-  player,
-  audio: createAudio(),
-  fx: createEffects(),
-  weather: createWeather(new Rng(seed + 99)),
-  police: createPoliceSystem(),
-  missions: createMissionSystem(),
-  sidejobs: createSideJobs(),
-  hud: createHud(),
-  input: createInput(canvas),
-  vehicles: [],
-  peds: [],
-  events: [],
-  hour: START_HOUR,
-  state: 'title',
-  time: 0,
-  aimWorld: null,
-  cameraOverride: null,
-  shotBanner: null,
-  shotDrive: null,
-  hasSave: false,
-  ctx: null,
-  view: { w: window.innerWidth, h: window.innerHeight },
-  save: null, // wired below
-};
-const renderer = createRenderer(canvas);
-G.ctx = renderer.ctx;
-G.hurtPlayer = (amount, angle) => hurtPlayer(G, amount, angle);
+  G.input = new Input(canvas);
+  G.audio = new AudioEngine();
+  G.city = new City();
+  G.fx = new Effects();
+  G.weather = new Weather();
+  G.player = createPlayer(1500, 1560);
+  G.wanted = createWanted();
+  G.missions = new Missions(G);
+  G.sidejobs = new SideJobs();
 
-// ---- World population -------------------------------------------------------
-G.peds = spawnPeds(G, 46);
-G.vehicles.push(...spawnTraffic(G, 13));
-// Parked cars along the streets, and boats at the marina and the island.
-const PARKED = ['sedan', 'coupe', 'compact', 'van', 'muscle', 'sedan', 'compact', 'coupe'];
-for (let i = 0; i < 26; i++) {
-  const p = city.randomRoadPoint(rng);
-  const v = createVehicle(rng.pick(PARKED), p.x + rng.range(-14, 14), p.y + rng.range(-14, 14), rng.pick([0, Math.PI / 2, Math.PI, -Math.PI / 2]), {});
-  v.color = rng.pick(v.def.colors);
-  G.vehicles.push(v);
+  // --- hooks the modules call -------------------------------------------
+  G.notify = (text, color) => {
+    G.notifications.push({ text, color: color || '#ffffff', t: 4.2 });
+    if (G.notifications.length > 5) G.notifications.shift();
+  };
+  G.addCash = (n, x, y) => {
+    G.player.cash += n;
+    if (x !== undefined) G.fx.text(x, y - 30, '+$' + n, '#7fe8a8');
+  };
+  G.hurtPlayer = (amount, fx, fy) => hurtPlayer(G, amount, fx, fy);
+  G.onWasted = () => {
+    if (G.state !== 'playing') return;
+    G.state = 'wasted';
+    G.stateTimer = 3.2;
+    G.audio.engine(false, 0);
+    G.audio.siren(false);
+    G.audio.fail();
+    G.missions.onPlayerDown(G);
+  };
+  G.onBusted = () => {
+    if (G.state !== 'playing') return;
+    G.state = 'busted';
+    G.stateTimer = 3.2;
+    G.audio.engine(false, 0);
+    G.audio.fail();
+    G.missions.onPlayerDown(G);
+    G.notify('BUSTED', '#ff5a4e');
+  };
+  G.onPlayerCrash = (v, impact) => {
+    if (impact > 300) {
+      const w = witnessCount(G, v.x, v.y);
+      if (w) reportCrime(G, 'hitCar', v.x, v.y, w);
+    }
+  };
+  G.onPlayerHitVehicle = (other, rel) => {
+    const w = witnessCount(G, other.x, other.y);
+    if (other.driver === 'police') reportCrime(G, 'ramPolice', other.x, other.y, w + 1);
+    else if (rel > 170) reportCrime(G, 'hitCar', other.x, other.y, w);
+    if (other.driver === 'traffic') other.panic = Math.max(other.panic, 3);
+  };
+  G.onPlayerHitPed = (ped, speed) => {
+    const w = witnessCount(G, ped.x, ped.y);
+    reportCrime(G, ped.state === 'down' ? 'killPed' : 'hitPed', ped.x, ped.y, w + 1);
+  };
+  G.saveGame = () => saveGame(G);
+  G.step = (dt) => stepGame(G, dt);
+  G.startGame = (cont) => startGame(G, cont);
+  G.hasSave = () => {
+    try { return !!window.localStorage.getItem(SAVE_KEY); } catch (e) { return false; }
+  };
+
+  if (isShotMode()) {
+    G.shotMode = true;
+    G.shotN = shotNumber();
+    seedWorld(G);
+    setupShot(G, G.shotN);
+  } else {
+    seedWorld(G);
+  }
+  return G;
 }
-// Boats moored just past the pier ends, in open water.
-placeBoat('speedboat', 1);
-placeBoat('skiff', 2);
-placeBoat('speedboat', 0);
-function placeBoat(type, pierIdx) {
-  const py = MARINA.pierYs[pierIdx];
-  const v = createVehicle(type, coastX(py) + MARINA.pierLen + 55, py + 42, Math.PI, {});
-  v.color = rng.pick(v.def.colors);
-  G.vehicles.push(v);
+
+function witnessCount(G, x, y) {
+  let n = 0;
+  for (const ped of G.peds) {
+    if (ped.state !== 'down' && dist(ped.x, ped.y, x, y) < 250) n++;
+  }
+  return n;
 }
 
-// ---- Saving -------------------------------------------------------------------
-function saveGame() {
+// A starter car, some traffic and boats so the world is alive at spawn.
+function seedWorld(G) {
+  const starter = makeVehicle('meridian', 1560, 1620, Math.PI, null);
+  G.vehicles.push(starter);
+  for (let i = 0; i < 10; i++) {
+    const v = spawnTrafficCar(G, G.player.x, G.player.y);
+    if (v) G.vehicles.push(v);
+  }
+  for (let i = 0; i < 3; i++) G.vehicles.push(spawnBoat(G));
+  for (let i = 0; i < 12; i++) {
+    const ped = spawnPed(G, G.player.x, G.player.y);
+    if (ped) G.peds.push(ped);
+  }
+}
+
+export function startGame(G, cont) {
+  if (cont) loadGame(G);
+  else {
+    G.player = createPlayer(1500, 1560);
+    G.missions = new Missions(G);
+    G.sidejobs = new SideJobs();
+    G.vehicles.length = 0;
+    G.peds.length = 0;
+    G.hostiles.length = 0;
+    clearPolice(G);
+    seedWorld(G);
+  }
+  G.state = 'playing';
+  G.audio.unlock();
+  G.notify('Welcome to Solstice Bay. Marisol Vega is waiting at Club Sirena.', '#ffd94a');
+}
+
+function saveGame(G) {
   try {
     const data = {
-      cash: player.cash,
-      armor: player.armor,
-      weapon: player.weapon,
-      ammo: player.ammo,
-      shells: city.shells.map((s) => (s.taken ? 1 : 0)).join(''),
-      shellsFound: player.shells,
-      done: G.missions.done,
-      hour: G.hour,
+      cash: G.player.cash,
+      armor: G.player.armor,
+      hasPistol: G.player.hasPistol,
+      ammo: G.player.ammo,
+      missionIndex: G.missions.index,
+      complete: G.missions.campaignDone,
+      shells: [...G.player.shellsFound],
     };
-    localStorage.setItem(SAVE_KEY, JSON.stringify(data));
-    G.hasSave = true;
-  } catch {
-    /* private mode etc. — the game simply does not persist */
-  }
-}
-G.save = saveGame;
-
-function loadGame() {
-  try {
-    const raw = localStorage.getItem(SAVE_KEY);
-    if (!raw) return false;
-    const d = JSON.parse(raw);
-    player.cash = d.cash ?? player.cash;
-    player.armor = d.armor ?? 0;
-    player.weapon = d.weapon ?? 'fists';
-    player.ammo = d.ammo ?? 0;
-    player.shells = d.shellsFound ?? 0;
-    if (typeof d.shells === 'string') city.shells.forEach((s, i) => { s.taken = d.shells[i] === '1'; });
-    G.missions.done = Array.isArray(d.done) ? d.done : [];
-    G.hour = typeof d.hour === 'number' ? d.hour : START_HOUR;
-    G.hasSave = true;
-    return true;
-  } catch {
-    return false;
-  }
-}
-loadGame();
-
-// ---- Services: garage, clinic, armoury ---------------------------------------
-const insideSite = { garage: false, clinic: false, armoury: false };
-
-function stepServices() {
-  const p = player;
-  const s = city.sites;
-  // Garage: drive in damaged, roll out whole. Charged per point repaired.
-  const atGarage = p.vehicle && Math.hypot(p.x - s.garage.x, p.y - s.garage.y) < 95;
-  if (atGarage && !insideSite.garage) {
-    const v = p.vehicle;
-    const dmg = v.def.health - v.health;
-    if (dmg > 1) {
-      const cost = Math.min(p.cash, Math.ceil(dmg * PRICES.repairPerPoint));
-      v.health = v.def.health;
-      v.dead = false;
-      p.cash -= cost;
-      G.hud.notify('Harbor Garage: repaired for $' + cost + '.');
-      G.audio.play('cash');
-      saveGame();
-    } else G.hud.notify('Harbor Garage: she is already whole.');
-  }
-  insideSite.garage = !!atGarage;
-
-  // Clinic: walk in hurt, walk out whole.
-  const atClinic = !p.vehicle && Math.hypot(p.x - s.clinic.x, p.y - s.clinic.y) < 62;
-  if (atClinic && !insideSite.clinic) {
-    if (p.health < 100 && p.cash >= PRICES.heal) {
-      p.cash -= PRICES.heal;
-      p.health = 100;
-      G.hud.notify('Neon Mile Clinic: patched up for $' + PRICES.heal + '.');
-      G.audio.play('pickup');
-    } else if (p.health < 100) G.hud.notify('The clinic wants $' + PRICES.heal + ' you do not have.');
-  }
-  insideSite.clinic = !!atClinic;
-
-  // Fort Arms: one sensible purchase per visit — gun, then armour, then ammo.
-  const atArms = !p.vehicle && Math.hypot(p.x - s.armoury.x, p.y - s.armoury.y) < 62;
-  if (atArms && !insideSite.armoury) {
-    if (p.weapon === 'fists' && p.cash >= PRICES.pistol) {
-      p.cash -= PRICES.pistol;
-      p.weapon = 'pistol';
-      p.ammo += 36;
-      G.hud.notify('Fort Arms: Harbor 9mm + 36 rounds, $' + PRICES.pistol + '.');
-      G.audio.play('cash');
-    } else if (p.armor < 100 && p.cash >= PRICES.armor) {
-      p.cash -= PRICES.armor;
-      p.armor = 100;
-      G.hud.notify('Fort Arms: vest fitted, $' + PRICES.armor + '.');
-      G.audio.play('cash');
-    } else if (p.weapon === 'pistol' && p.cash >= PRICES.ammoBox) {
-      p.cash -= PRICES.ammoBox;
-      p.ammo += 24;
-      G.hud.notify('Fort Arms: +24 rounds, $' + PRICES.ammoBox + '.');
-      G.audio.play('cash');
-    } else {
-      G.hud.notify('Fort Arms: pistol $' + PRICES.pistol + ' · vest $' + PRICES.armor + ' · ammo $' + PRICES.ammoBox + '.');
-    }
-    saveGame();
-  }
-  insideSite.armoury = !!atArms;
+    window.localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+  } catch (e) { /* storage unavailable: the session just will not persist */ }
 }
 
-// ---- Collisions between vehicles, and vehicles meeting people -----------------
-function stepCollisions(dt) {
-  const vs = G.vehicles;
-  for (let i = 0; i < vs.length; i++) {
-    const a = vs[i];
-    for (let j = i + 1; j < vs.length; j++) {
-      const b = vs[j];
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const rr = (a.def.len + b.def.len) * 0.32;
-      const d2 = dx * dx + dy * dy;
-      if (d2 > rr * rr || d2 === 0) continue;
-      const d = Math.sqrt(d2);
-      const nx = dx / d;
-      const ny = dy / d;
-      const overlap = rr - d;
-      a.x -= nx * overlap * 0.5;
-      a.y -= ny * overlap * 0.5;
-      b.x += nx * overlap * 0.5;
-      b.y += ny * overlap * 0.5;
-      const rel = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
-      if (rel < 0) {
-        const impulse = -rel * 0.72;
-        a.vx -= nx * impulse;
-        a.vy -= ny * impulse;
-        b.vx += nx * impulse;
-        b.vy += ny * impulse;
-        if (rel < -120) {
-          damageVehicle(G, a, (-rel - 120) * 0.05, a.angle);
-          damageVehicle(G, b, (-rel - 120) * 0.05, b.angle);
-          if (Math.hypot(a.x - player.x, a.y - player.y) < 640) G.audio.play('crash', rel < -300);
-          if (a.driver === 'player' || b.driver === 'player') {
-            G.police.report(G, 1.6, player.x, player.y, true);
-            if (rel < -260) hurtPlayer(G, 6, Math.atan2(dy, dx));
-          }
-        }
-      }
-    }
-    // A moving vehicle meets a person.
-    const sp = Math.hypot(a.vx, a.vy);
-    if (sp > 46) {
-      for (const ped of G.peds) {
-        if (ped.state === 'down') continue;
-        if (Math.abs(ped.x - a.x) < a.def.len * 0.42 && Math.abs(ped.y - a.y) < a.def.wid * 0.6 + 7) {
-          hurtPed(G, ped, sp > 190 ? 40 : 22, Math.atan2(a.vy, a.vx));
-          scarePeds(G, a.x, a.y, 260);
-          if (a.driver === 'player') {
-            G.police.report(G, 5, ped.x, ped.y, true);
-            G.hud.notify('You hit a pedestrian!');
-          }
-          if (a.driver) damageVehicle(G, a, 3);
-        }
-      }
-      if (!player.vehicle && player.hitT <= 0 && Math.abs(player.x - a.x) < a.def.len * 0.42 && Math.abs(player.y - a.y) < a.def.wid * 0.6 + 7) {
-        hurtPlayer(G, sp > 200 ? 26 : 13, Math.atan2(a.vy, a.vx));
-        player.hitT = 0.8;
-        player.x += a.vx * 0.14;
-        player.y += a.vy * 0.14;
-      }
-    }
-  }
+function loadGame(G) {
+  let data = null;
+  try { data = JSON.parse(window.localStorage.getItem(SAVE_KEY) || 'null'); } catch (e) { data = null; }
+  if (!data) { startGame(G, false); return; }
+  G.player = createPlayer(1500, 1560);
+  G.player.cash = data.cash || 0;
+  G.player.armor = data.armor || 0;
+  G.player.hasPistol = !!data.hasPistol;
+  G.player.weapon = data.hasPistol ? 'pistol' : 'fists';
+  G.player.ammo = data.ammo || 0;
+  G.player.shellsFound = new Set(data.shells || []);
+  for (const s of G.city.shells) if (G.player.shellsFound.has(s.id)) s.taken = true;
+  G.missions = new Missions(G);
+  G.missions.index = data.missionIndex || 0;
+  G.missions.campaignDone = !!data.complete;
+  G.sidejobs = new SideJobs();
+  G.vehicles.length = 0;
+  G.peds.length = 0;
+  G.hostiles.length = 0;
+  clearPolice(G);
+  seedWorld(G);
+  G.notify('Welcome back to Solstice Bay.', '#ffd94a');
 }
 
-// ---- Wasted / busted ------------------------------------------------------------
-function respawn(kind) {
-  const clinic = city.sites.clinic;
-  if (player.vehicle) {
-    player.vehicle.driver = null;
-    player.vehicle = null;
+function respawn(G, atPoi, fineRate, label) {
+  const p = G.player;
+  const fine = Math.floor(p.cash * fineRate);
+  p.cash -= fine;
+  if (p.vehicle) {
+    p.vehicle.driver = null;
+    p.vehicle = null;
+    G.audio.engine(false, 0);
   }
-  if (kind === 'wasted') player.cash = Math.max(0, player.cash - PRICES.wastedFee);
-  else player.cash = Math.max(0, player.cash - Math.floor(player.cash * PRICES.bustFineRate));
-  player.health = 100;
-  player.x = clinic.x + 30;
-  player.y = clinic.y + 46;
-  G.police.clear();
-  G.audio.setEngine(false, 0);
-  G.audio.setSiren(false);
+  const spot = poi(atPoi);
+  p.x = spot.x + 30;
+  p.y = spot.y + 26;
+  p.health = 100;
+  clearPolice(G);
   G.state = 'playing';
-  saveGame();
+  G.notify(label + ' Fine: $' + fine.toLocaleString('en-US'), '#ffb340');
+  saveGame(G);
 }
 
-function stepEvents() {
-  for (const e of G.events) {
-    if (e.type === 'wasted' && G.state === 'playing') {
-      G.state = 'wasted';
-      G.audio.play('fail');
-      G.audio.setEngine(false, 0);
-      if (G.missions.current) G.missions.fail(G, 'You ended up in the clinic.');
-    }
-    if (e.type === 'busted' && G.state === 'playing') {
-      G.state = 'busted';
-      G.audio.play('fail');
-      G.audio.setEngine(false, 0);
-      if (G.missions.current) G.missions.fail(G, 'The SBPD took you in.');
-    }
+function stepGame(G, dt) {
+  G.time += dt;
+  G.frame++;
+  const input = G.input;
+
+  if (G.state === 'title') {
+    G.titlePan += dt * 26;
+    G.camera.x = 1500 + Math.sin(G.titlePan * 0.05) * 700 - VIEW_W / 2;
+    G.camera.y = 1400 + Math.cos(G.titlePan * 0.037) * 500 - VIEW_H / 2;
+    if (input.hit('Enter')) startGame(G, false);
+    if (input.hit('KeyC') && G.hasSave()) startGame(G, true);
+    if (input.mouse.clicked) { G.audio.unlock(); startGame(G, G.hasSave()); }
+    render(G, G.ctx, VIEW_W, VIEW_H);
+    drawTitle(G);
+    input.endFrame();
+    return;
   }
-  G.events.length = 0;
-}
 
-// ---- The world step ----------------------------------------------------------------
-function stepWorld(dt) {
-  G.hour = (G.hour + (dt * 24) / DAY_LENGTH) % 24;
+  if (G.state === 'wasted' || G.state === 'busted') {
+    G.stateTimer -= dt;
+    render(G, G.ctx, VIEW_W, VIEW_H);
+    drawDownOverlay(G, G.state === 'wasted' ? 'WASTED' : 'BUSTED');
+    if (G.stateTimer <= 0) {
+      if (G.state === 'wasted') respawn(G, 'clinic', 0.10, 'Bay Clinic patched you up.');
+      else respawn(G, 'police', 0.15, 'Released from SBPD custody.');
+    }
+    input.endFrame();
+    return;
+  }
+
+  if (input.hit('Escape', 'KeyP') && G.state === 'playing') G.state = 'paused';
+  else if (input.hit('Escape', 'KeyP') && G.state === 'paused') G.state = 'playing';
+  if (G.state === 'paused') {
+    render(G, G.ctx, VIEW_W, VIEW_H);
+    drawHUD(G, G.ctx, VIEW_W, VIEW_H);
+    drawPause(G);
+    if (input.hit('KeyM')) { G.audio.setMuted(!G.audio.muted); }
+    if (input.hit('KeyS')) { saveGame(G); G.notify('Saved.', '#7fe8a8'); }
+    input.endFrame();
+    return;
+  }
+
+  // --- playing -------------------------------------------------------------
+  G.prompt = null;
+  G.objective = null;
+  G.sideObjective = null;
+
+  if (!G.freezeHour) {
+    G.hour = (G.hour + dt * (24 / TIME.dayLength)) % 24;
+  }
   G.weather.update(dt);
+  G.mouseWorld.x = G.camera.x + input.mouse.x;
+  G.mouseWorld.y = G.camera.y + input.mouse.y;
+
+  if (G.shotMode) {
+    driveShot(G, G.shotN);
+    if (G.shotN === 3) G.missions.update(G, 0); // keep the marker/HUD alive, frozen logic
+  } else {
+    G.missions.update(G, dt);
+    G.sidejobs.update(G, dt);
+    updatePlayer(G, dt);
+  }
+
+  // AI drivers fill their controls, then every vehicle steps together.
+  for (const v of G.vehicles) {
+    if (v.driver === 'traffic') {
+      if (v.def.kind === 'boat') updateBoat(G, v, dt);
+      else updateTraffic(G, v, dt);
+    }
+  }
+  updatePolice(G, dt);
+  for (const v of [...G.vehicles]) stepVehicle(G, v, dt);
+  if (G.shotMode && G.player.vehicle) {
+    // Shot scenes drive the car directly; keep the player glued to it so
+    // pursuit AI and markers track the vehicle, not the spawn point.
+    G.player.x = G.player.vehicle.x;
+    G.player.y = G.player.vehicle.y;
+  }
+  collideVehicles(G, G.vehicles, dt);
+  for (let i = G.vehicles.length - 1; i >= 0; i--) {
+    if (G.vehicles[i].dead && G.vehicles[i].driver !== 'player') {
+      // Burnt-out wrecks linger as scenery for a while, then go.
+      if (Math.random() < dt * 0.05) G.vehicles.splice(i, 1);
+    }
+  }
+  updatePeds(G, dt);
   G.fx.update(dt);
-  stepPlayer(G, dt);
-  for (const v of G.vehicles) if (v.driver === 'traffic') stepTraffic(G, v, dt);
-  G.police.update(G, dt);
-  G.missions.update(G, dt);
-  G.sidejobs.update(G, dt);
-  stepPeds(G, dt);
-  stepCollisions(dt);
-  stepServices();
-  stepEvents();
-  G.hud.update(dt);
-  // The engine note belongs to the car; silence it on foot.
-  if (!player.vehicle) G.audio.setEngine(false, 0);
+  updateSpawning(G, dt);
+  updateNotifications(G, dt);
+  updateDistrict(G);
+
+  if (!G.cameraLocked) {
+    G.camera.x = clamp(G.player.x - VIEW_W / 2, 0, WORLD.width - VIEW_W);
+    G.camera.y = clamp(G.player.y - VIEW_H / 2, 0, WORLD.height - VIEW_H);
+  }
+  if (G.shotObjective) G.objective = G.shotObjective;
+
+  G.audio.updateMusic(dt, true);
+  render(G, G.ctx, VIEW_W, VIEW_H);
+  drawHUD(G, G.ctx, VIEW_W, VIEW_H);
+
+  if (G.shotMode && G.frame > 110 && !G.shotReadyAt) {
+    G.shotReadyAt = G.frame;
+    window.__shotReady = true;
+  }
+  input.endFrame();
 }
 
-// ---- Shot mode ----------------------------------------------------------------------
-if (shotName) {
-  setupShot(G, shotName);
-  // Settle the scene: two seconds of world, Jax holding his line.
-  for (let i = 0; i < 60; i++) {
-    G.weather.update(1 / 30);
-    G.fx.update(1 / 30);
-    stepPlayer(G, 1 / 30);
-    for (const v of G.vehicles) if (v.driver === 'traffic') stepTraffic(G, v, 1 / 30);
-    if (shotName === 'chase') G.police.update(G, 1 / 30);
-    stepPeds(G, 1 / 30);
-    G.hud.update(1 / 30);
+function updateSpawning(G, dt) {
+  G.spawnTimer -= dt;
+  if (G.spawnTimer > 0) return;
+  G.spawnTimer = 0.7;
+  const p = G.player;
+  const traffic = G.vehicles.filter((v) => v.driver === 'traffic' && v.def.kind === 'car').length;
+  if (traffic < 13) {
+    const v = spawnTrafficCar(G, p.x, p.y);
+    if (v) G.vehicles.push(v);
   }
-  renderer.draw(G);
-  G.hud.draw(renderer.ctx, G, renderer.w, renderer.h);
-  requestAnimationFrame(() => {
-    renderer.draw(G);
-    G.hud.draw(renderer.ctx, G, renderer.w, renderer.h);
-    window.__shotReady = true;
-  });
-  window.__game = G;
-} else {
-  // ---- The live loop ------------------------------------------------------------------
+  const boats = G.vehicles.filter((v) => v.def.kind === 'boat').length;
+  if (boats < 3) G.vehicles.push(spawnBoat(G));
+  if (G.peds.length < 17) {
+    const ped = spawnPed(G, p.x, p.y);
+    if (ped) G.peds.push(ped);
+  }
+  // Despawn far traffic so the near field stays fresh.
+  for (let i = G.vehicles.length - 1; i >= 0; i--) {
+    const v = G.vehicles[i];
+    if (v.driver === 'traffic' && dist(v.x, v.y, p.x, p.y) > 1350) G.vehicles.splice(i, 1);
+  }
+}
+
+function updateNotifications(G, dt) {
+  for (let i = G.notifications.length - 1; i >= 0; i--) {
+    G.notifications[i].t -= dt;
+    if (G.notifications[i].t <= 0) G.notifications.splice(i, 1);
+  }
+  if (G.districtToast) {
+    G.districtToast.t -= dt;
+    if (G.districtToast.t <= 0) G.districtToast = null;
+  }
+}
+
+function updateDistrict(G) {
+  const d = G.city.districtAt(G.player.x, G.player.y);
+  if (d.name !== G.lastDistrict) {
+    if (G.lastDistrict) G.districtToast = { name: d.name, t: 2.6 };
+    G.lastDistrict = d.name;
+  }
+}
+
+// --- screens -----------------------------------------------------------------
+
+function drawTitle(G) {
+  const ctx = G.ctx;
+  ctx.fillStyle = 'rgba(5,8,18,0.55)';
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ffd23c';
+  ctx.font = '800 64px system-ui, sans-serif';
+  ctx.fillText('SOLSTICE HEAT', VIEW_W / 2, 190);
+  ctx.fillStyle = '#ff4fa3';
+  ctx.font = '800 40px system-ui, sans-serif';
+  ctx.fillText('· NEON TIDE ·', VIEW_W / 2, 252);
+  ctx.fillStyle = '#e8eef4';
+  ctx.font = '500 19px system-ui, sans-serif';
+  ctx.fillText('An open-world crime story in Solstice Bay — steal, race, run packages,', VIEW_W / 2, 320);
+  ctx.fillText('and finish Marisol Vega\'s twelve jobs under the SBPD\'s nose.', VIEW_W / 2, 348);
+  ctx.font = '600 21px system-ui, sans-serif';
+  ctx.fillStyle = '#7fe8a8';
+  ctx.fillText(G.hasSave() ? 'Click or press ENTER — new game · C — continue' : 'Click or press ENTER to play', VIEW_W / 2, 430);
+  ctx.font = '500 15.5px system-ui, sans-serif';
+  ctx.fillStyle = '#b9c6d2';
+  ctx.fillText('WASD drive & walk · E enter/exit & talk · mouse + F or click fight · SPACE handbrake · SHIFT sprint · ESC pause', VIEW_W / 2, 486);
+  ctx.fillText('Missions, taxi fares, boat courier runs, 25 seashells, one very patient police force.', VIEW_W / 2, 514);
+}
+
+function drawPause(G) {
+  const ctx = G.ctx;
+  ctx.fillStyle = 'rgba(5,8,18,0.6)';
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '800 38px system-ui, sans-serif';
+  ctx.fillText('PAUSED', VIEW_W / 2, 250);
+  ctx.font = '500 18px system-ui, sans-serif';
+  ctx.fillStyle = '#b9c6d2';
+  ctx.fillText('ESC resume · S save · M ' + (G.audio.muted ? 'unmute' : 'mute'), VIEW_W / 2, 310);
+  ctx.fillText('Mission ' + Math.min(G.missions.index + 1, 12) + ' of 12 · ' + G.player.shellsFound.size + ' / 25 seashells', VIEW_W / 2, 344);
+}
+
+function drawDownOverlay(G, word) {
+  const ctx = G.ctx;
+  ctx.fillStyle = word === 'WASTED' ? 'rgba(80,6,6,0.45)' : 'rgba(6,16,60,0.45)';
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = word === 'WASTED' ? '#ff5a4e' : '#7fa8ff';
+  ctx.font = '800 72px system-ui, sans-serif';
+  ctx.fillText(word, VIEW_W / 2, 320);
+}
+
+// --- boot ----------------------------------------------------------------------
+
+export function boot() {
+  const canvas = document.getElementById('game');
+  const G = createGame(canvas);
+  window.__NEON_TIDE__ = G;
   let last = performance.now();
-  let statusT = 0;
   function frame(now) {
-    requestAnimationFrame(frame);
-    let dt = Math.min(0.033, (now - last) / 1000);
+    const dt = Math.min(0.033, (now - last) / 1000 || 0.016);
     last = now;
-    if (!(dt > 0)) dt = 0.016;
-    G.time += dt;
-
-    // Aim: the mouse in world space, from last frame's camera.
-    if (G.cam) {
-      G.aimWorld = {
-        x: G.cam.x + (G.input.mouse.x - renderer.w / 2) / G.cam.zoom,
-        y: G.cam.y + (G.input.mouse.y - renderer.h / 2) / G.cam.zoom,
-      };
-    }
-
-    if (G.state === 'title') {
-      G.audio.setMusic(true);
-      if (G.input.hit('Enter')) {
-        G.audio.ensure();
-        G.audio.setMusic(false);
-        G.state = 'playing';
-        G.hud.notify(G.hasSave ? 'Welcome back to Solstice Bay, Jax.' : 'Walk to the M — Marisol Vega has work.');
-      }
-      if (G.input.hit('KeyN') && G.hasSave) {
-        try { localStorage.removeItem(SAVE_KEY); } catch { /* ignore */ }
-        location.reload();
-      }
-      // The title idles over a slow pan of the bay.
-      G.cameraOverride = { x: 1500 + Math.sin(G.time * 0.05) * 500, y: 1500 + Math.cos(G.time * 0.037) * 420, zoom: 0.62 };
-      G.weather.update(dt);
-      G.fx.update(dt);
-      for (const v of G.vehicles) if (v.driver === 'traffic') stepTraffic(G, v, dt);
-      stepPeds(G, dt);
-      renderer.draw(G);
-      G.hud.drawTitle(renderer.ctx, G, renderer.w, renderer.h);
-    } else if (G.state === 'paused') {
-      renderer.draw(G);
-      G.hud.draw(renderer.ctx, G, renderer.w, renderer.h);
-      G.hud.drawPause(renderer.ctx, renderer.w, renderer.h);
-      if (G.input.hit('KeyP') || G.input.hit('Escape')) G.state = 'playing';
-    } else if (G.state === 'wasted' || G.state === 'busted') {
-      renderer.draw(G);
-      G.hud.drawEnd(renderer.ctx, G.state, renderer.w, renderer.h);
-      if (G.input.hit('Enter')) respawn(G.state);
-    } else {
-      G.cameraOverride = null;
-      if (G.input.hit('KeyP') || G.input.hit('Escape')) G.state = 'paused';
-      if (G.input.hit('KeyM')) G.hud.notify(G.audio.toggleMute() ? 'Sound off.' : 'Sound on.');
-      stepWorld(dt);
-      renderer.draw(G);
-      G.hud.draw(renderer.ctx, G, renderer.w, renderer.h);
-    }
-
-    statusT -= dt;
-    if (statusT <= 0) {
-      statusT = 1;
-      const obj = G.missions.objective();
-      if (statusEl) statusEl.textContent = obj ? obj.title + ': ' + obj.text : 'Solstice Heat: Neon Tide.';
-    }
-    G.input.endFrame();
+    G.step(dt);
+    requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
-  window.__game = G;
+  return G;
 }
