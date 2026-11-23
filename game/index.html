@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Solstice Heat: Neon Tide</title>
+<style>
+  html, body { margin:0; height:100%; overflow:hidden; background:#070b16; font-family:'Segoe UI', system-ui, sans-serif; color:#eef4ff; }
+  #game { position:fixed; inset:0; width:100%; height:100%; display:block; }
+  #hud { position:fixed; inset:0; pointer-events:none; transition:opacity .3s; z-index:5; }
+  .panel { background:rgba(8,12,24,.62); border:1px solid rgba(0,229,255,.35); border-radius:10px; padding:8px 12px; backdrop-filter:blur(3px); }
+  #topLeft { position:absolute; top:14px; left:14px; min-width:210px; }
+  .barWrap { height:11px; background:rgba(255,255,255,.14); border-radius:6px; margin:4px 0; overflow:hidden; }
+  #healthFill { height:100%; width:100%; background:#59cd90; transition:width .2s; }
+  #armourFill { height:100%; width:0%; background:#6db3ff; transition:width .2s; }
+  .barLabel { font-size:10px; letter-spacing:.14em; opacity:.85; }
+  #topRight { position:absolute; top:14px; right:14px; text-align:right; }
+  #cashEl { font-size:24px; font-weight:800; color:#7dff9a; text-shadow:0 2px 8px rgba(0,0,0,.6); }
+  #bankEl { font-size:11px; opacity:.8; }
+  #starsEl { font-size:22px; letter-spacing:3px; }
+  #clockEl { font-size:12px; opacity:.9; }
+  #rankEl { font-size:11px; color:#ffd23f; margin-top:2px; }
+  #districtEl { font-size:12px; color:#9be7ff; font-weight:700; letter-spacing:.06em; }
+  #ammoEl, #radioEl { font-size:11px; opacity:.9; }
+  #minimapWrap { position:absolute; left:14px; bottom:14px; }
+  #minimap { border-radius:10px; display:block; }
+  #speedo { position:absolute; right:18px; bottom:16px; text-align:center; opacity:0; transition:opacity .25s; }
+  #speedVal { font-size:44px; font-weight:900; color:#fff; text-shadow:0 0 14px rgba(0,229,255,.8); line-height:1; }
+  #speedo .unit { font-size:11px; letter-spacing:.2em; opacity:.8; }
+  #vehName { font-size:12px; color:#ffd23f; margin-top:2px; }
+  #objectiveEl { position:absolute; top:14px; left:50%; transform:translateX(-50%); max-width:52vw; text-align:center; font-size:14px; font-weight:700; color:#ffe9a8; text-shadow:0 2px 6px #000; }
+  #bannerEl { position:absolute; top:19%; left:50%; transform:translate(-50%,0); text-align:center; opacity:0; transition:opacity .4s; pointer-events:none; }
+  #bannerTitle { font-size:40px; font-weight:900; letter-spacing:.08em; color:#fff; text-shadow:0 0 22px rgba(255,79,216,.9), 0 3px 10px #000; }
+  #bannerSub { font-size:15px; color:#ffe9a8; text-shadow:0 2px 6px #000; margin-top:4px; }
+  #subtitleEl { position:absolute; bottom:9%; left:50%; transform:translateX(-50%); max-width:64vw; text-align:center; opacity:0; transition:opacity .3s; background:rgba(0,0,0,.55); padding:8px 18px; border-radius:8px; }
+  #subName { color:#ff7ab6; font-weight:800; font-size:13px; letter-spacing:.05em; }
+  #subText { font-size:15px; }
+  #toastEl { position:absolute; bottom:24%; left:50%; transform:translateX(-50%); font-size:15px; font-weight:700; color:#aef3ff; text-shadow:0 2px 6px #000; opacity:0; transition:opacity .3s; }
+  #promptEl { position:absolute; bottom:17%; left:50%; transform:translateX(-50%); font-size:14px; font-weight:700; color:#fff; background:rgba(8,12,24,.7); border:1px solid rgba(255,210,63,.6); padding:6px 14px; border-radius:20px; opacity:0; transition:opacity .2s; }
+  #bustWrap { position:absolute; bottom:30%; left:50%; transform:translateX(-50%); width:280px; opacity:0; text-align:center; font-size:12px; letter-spacing:.2em; color:#6db3ff; }
+  #bustBar { height:10px; background:rgba(255,255,255,.15); border-radius:6px; overflow:hidden; margin-top:4px; }
+  #bustFill { height:100%; width:0%; background:#3f8cff; }
+  #damageFlash { position:fixed; inset:0; background:radial-gradient(ellipse at center, transparent 55%, rgba(255,30,40,.55) 100%); opacity:0; pointer-events:none; transition:opacity .12s; z-index:6; }
+  .letterbox { position:fixed; left:0; right:0; height:0; background:#000; z-index:7; transition:height .4s; }
+  #letterboxT { top:0; } #letterboxB { bottom:0; }
+  #photoHint { position:fixed; bottom:9vh; left:50%; transform:translateX(-50%); z-index:8; font-size:12px; letter-spacing:.25em; color:#aef3ff; opacity:0; }
+  .screen { position:fixed; inset:0; display:none; align-items:center; justify-content:center; flex-direction:column; z-index:10; background:linear-gradient(160deg, rgba(10,8,32,.88), rgba(122,42,110,.82) 55%, rgba(255,122,89,.85)); text-align:center; padding:20px; }
+  .screen h1 { font-size:54px; margin:0 0 4px; font-weight:900; letter-spacing:.04em; color:#fff; text-shadow:0 0 30px rgba(255,79,216,.95); }
+  .screen h2 { font-size:30px; margin:0 0 10px; color:#ffd23f; letter-spacing:.1em; }
+  .screen p { max-width:620px; font-size:15px; line-height:1.55; color:#e8f2ff; }
+  .btn { pointer-events:auto; cursor:pointer; display:block; margin:7px auto; min-width:250px; padding:12px 26px; font-size:16px; font-weight:800; letter-spacing:.06em; color:#0b1020; background:linear-gradient(90deg,#00e5ff,#ff4fd8); border:none; border-radius:26px; box-shadow:0 4px 18px rgba(0,0,0,.45); }
+  .btn:hover { filter:brightness(1.15); }
+  .btn.secondary { background:rgba(255,255,255,.14); color:#fff; border:1px solid rgba(255,255,255,.5); }
+  #howPanel { display:none; max-width:640px; background:rgba(5,8,18,.75); border:1px solid rgba(0,229,255,.4); border-radius:12px; padding:14px 22px; text-align:left; font-size:14px; line-height:1.7; }
+  #howPanel b { color:#ffd23f; }
+  #startStats { font-size:13px; color:#aef3ff; margin-top:10px; }
+  .neon { color:#ff4fd8; }
+</style>
+</head>
+<body>
+<canvas id="game" aria-label="Solstice Heat: Neon Tide — open-world driving game"></canvas>
+
+<div id="hud">
+  <div id="topLeft" class="panel">
+    <div class="barLabel">HEALTH</div>
+    <div class="barWrap"><div id="healthFill"></div></div>
+    <div class="barLabel">ARMOUR</div>
+    <div class="barWrap"><div id="armourFill"></div></div>
+    <div id="rankEl">Wheelman · 0 XP</div>
+    <div id="ammoEl"></div>
+    <div id="radioEl"></div>
+  </div>
+  <div id="topRight">
+    <div id="districtEl">Boardwalk</div>
+    <div id="starsEl">☆☆☆☆☆</div>
+    <div id="cashEl">$250</div>
+    <div id="bankEl">BANK $0</div>
+    <div id="clockEl">10:04 · clear</div>
+  </div>
+  <div id="objectiveEl"></div>
+  <div id="bannerEl"><div id="bannerTitle"></div><div id="bannerSub"></div></div>
+  <div id="minimapWrap" class="panel" style="padding:4px;"><canvas id="minimap" width="150" height="150"></canvas></div>
+  <div id="speedo"><div id="speedVal">0</div><div class="unit">KM/H</div><div id="vehName"></div></div>
+  <div id="subtitleEl"><span id="subName"></span> <span id="subText"></span></div>
+  <div id="toastEl"></div>
+  <div id="promptEl"></div>
+  <div id="bustWrap">BUSTED<div id="bustBar"><div id="bustFill"></div></div></div>
+</div>
+<div id="damageFlash"></div>
+<div id="letterboxT" class="letterbox"></div>
+<div id="letterboxB" class="letterbox"></div>
+<div id="photoHint">PHOTO MODE — P TO EXIT</div>
+
+<div id="startScreen" class="screen" style="display:flex;">
+  <h1>SOLSTICE HEAT</h1>
+  <h2><span class="neon">NEON TIDE</span></h2>
+  <p>Solstice Bay glitters — and everything glittering is owned by somebody dangerous. You are <b>Jax Marlowe</b>, a wheelman with a clean licence and dirty debts. Fixer <b>Marisol Vega</b> offers one season of jobs: twelve runs across eight districts, by road and by sea, with the SBPD and the rival Kings watching every mile. Drive well, and the bay is yours.</p>
+  <button class="btn" id="btnPlay">▶ &nbsp;PLAY — NEW GAME</button>
+  <button class="btn" id="btnContinue">CONTINUE</button>
+  <button class="btn secondary" id="btnHow">HOW TO PLAY</button>
+  <div id="howPanel">
+    <b>WASD / Arrows</b> — move &amp; drive &nbsp;·&nbsp; <b>Shift</b> — sprint<br>
+    <b>Space</b> — handbrake / drift &nbsp;·&nbsp; <b>E</b> — enter/exit car, accept jobs, talk<br>
+    <b>F / Mouse click</b> — melee &amp; pistol &nbsp;·&nbsp; <b>R</b> — reset car<br>
+    <b>M</b> — radio station &nbsp;·&nbsp; <b>P</b> — photo mode &nbsp;·&nbsp; <b>Esc</b> — pause<br>
+    Follow the pink marker for Marisol's story. Gold rings are side jobs, green rings are race checkpoints. Shells hide on the beaches; postcards at landmarks. Heat fades when the cops lose sight of you.
+  </div>
+  <div id="startStats"></div>
+</div>
+
+<div id="pauseScreen" class="screen">
+  <h2>PAUSED</h2>
+  <p id="pauseStats">Solstice Bay waits for no one — except you, right now.</p>
+  <button class="btn" id="btnResume">RESUME</button>
+  <button class="btn secondary" id="btnRestart">RESPAWN AT BOARDWALK</button>
+  <button class="btn secondary" id="btnQuit">QUIT TO TITLE</button>
+</div>
+
+<div id="endScreen" class="screen">
+  <h1 id="endTitle">WASTED</h1>
+  <p id="endText"></p>
+  <button class="btn" id="btnRespawn">CONTINUE</button>
+</div>
+
+<script src="vendor/three.min.js"></script>
+<script src="src/config.js"></script>
+<script src="src/random.js"></script>
+<script src="src/input.js"></script>
+<script src="src/audio.js"></script>
+<script src="src/city.js"></script>
+<script src="src/buildings.js"></script>
+<script src="src/vehicles.js"></script>
+<script src="src/pedestrians.js"></script>
+<script src="src/player.js"></script>
+<script src="src/police.js"></script>
+<script src="src/missions.js"></script>
+<script src="src/sidejobs.js"></script>
+<script src="src/economy.js"></script>
+<script src="src/weather.js"></script>
+<script src="src/hud.js"></script>
+<script src="src/effects.js"></script>
+<script src="src/shots.js"></script>
+<script src="src/main.js"></script>
+</body>
+</html>
