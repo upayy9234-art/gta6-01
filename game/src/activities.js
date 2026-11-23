@@ -1,94 +1,293 @@
-// Solstice Heat - activities (new in Round 12): 30 hidden shells,
-// 8 stunt ramps live in races.js, 6 postcard photo spots, and a roaming
-// time-trial beacon. Progress persists through the economy save.
-window.SH = window.SH || {};
-(function (SH) {
-  'use strict';
-  var U = SH.U, C = SH.Config;
-  var Ac = { shells: [], cards: [], beacon: null, beaconTimer: 0, beaconLeft: 0 };
-  SH.Activities = Ac;
-  Ac.init = function (scene, rng) {
-    Ac.scene = scene;
-    var shellMat = new THREE.MeshBasicMaterial({ color: 0xffe9f4 });
-    var shellGeo = new THREE.SphereGeometry(0.55, 8, 6);
-    var spots = [];
-    // Shells hug the beach and pier, with a few hidden inland.
-    for (var i = 0; i < C.SHELL_COUNT; i++) {
-      var x, z;
-      if (i < 20) { x = rng.range(340, 430); z = rng.range(-420, 420); }
-      else if (i < 25) { x = rng.range(410, 530); z = -260 + rng.range(-6, 6); }
-      else { var rp = SH.City.nearestRoadPoint(rng.range(-380, 300), rng.range(-380, 380)); x = rp.x + 12; z = rp.z + rng.range(-30, 30); }
-      spots.push([x, z]);
-    }
-    spots.forEach(function (s, i) {
-      var m = new THREE.Mesh(shellGeo, shellMat);
-      m.position.set(s[0], 0.7, s[1]); m.scale.y = 0.6; scene.add(m);
-      var found = SH.Economy.shellsFound.indexOf(i) >= 0;
-      m.visible = !found;
-      Ac.shells.push({ mesh: m, x: s[0], z: s[1], idx: i, found: found });
-    });
-    Ac.shellCount = function () { return Ac.shells.filter(function (s) { return s.found; }).length; };
-    // Postcard spots: glowing rings at scenic viewpoints.
-    var cardSpots = [[430, 30, 'Boardwalk Sunset'], [535, -260, 'Marina Pier End'], [88, 328, 'Hills Overlook'], [-168, 168, 'Old Town Arch'], [8, -328, 'South Beach'], [328, -168, 'Marina Lights']];
-    var ringGeo = new THREE.RingGeometry(1.6, 2.1, 20);
-    cardSpots.forEach(function (s, i) {
-      var ring = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: 0x7cff4d, transparent: true, opacity: 0.7, side: THREE.DoubleSide }));
-      ring.rotation.x = -Math.PI / 2; ring.position.set(s[0], 0.15, s[1]); scene.add(ring);
-      Ac.cards.push({ mesh: ring, x: s[0], z: s[1], name: s[2], idx: i, found: SH.Economy.postcardsFound.indexOf(i) >= 0 });
-    });
-    // Roaming time-trial beacon.
-    var bGeo = new THREE.CylinderGeometry(2.4, 2.4, 36, 12, 1, true);
-    Ac.beacon = new THREE.Mesh(bGeo, new THREE.MeshBasicMaterial({ color: 0xb44dff, transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false }));
-    Ac.beacon.position.y = 18; Ac.beacon.visible = false; scene.add(Ac.beacon);
-    Ac.beaconAt = null;
+// Solstice Heat — activities.js
+// Collectibles and free-roam activities: thirty seashells scattered
+// along the beach and pier, six photo postcards at scenic spots, and
+// a beacon time-trial that chains glowing beacons across the city.
+// Collection state persists in the economy save.
+(function () {
+  "use strict";
+  window.SH = window.SH || {};
+
+  var cfg = window.SH.config;
+
+  var POSTCARD_SPOTS = [
+    { id: "pc-pier", name: "Marina Pier at Dusk", x: 40, z: 372 },
+    { id: "pc-neon", name: "Neon Mile Lights", x: 0, z: 150 },
+    { id: "pc-azure", name: "Hotel Azure Steps", x: 30, z: 118 },
+    { id: "pc-heights", name: "Palm Heights View", x: -10, z: -170 },
+    { id: "pc-port", name: "Port Cranes", x: 190, z: -140 },
+    { id: "pc-campus", name: "University Lawn", x: -190, z: -140 }
+  ];
+
+  var activities = {
+    shells: [],
+    postcards: [],
+    beacon: null,
+    beaconIndex: 0,
+    beaconTimer: 0,
+    beaconActive: false,
+    beaconOrder: []
   };
-  Ac.update = function (dt) {
-    var p = SH.Player.pos(), t = performance.now() / 1000;
-    for (var i = 0; i < Ac.shells.length; i++) {
-      var s = Ac.shells[i];
-      if (s.found) continue;
-      s.mesh.position.y = 0.7 + Math.sin(t * 2 + i) * 0.15;
-      s.mesh.rotation.y = t + i;
-      if (U.dist2d(p.x, p.z, s.x, s.z) < 2.6) {
-        s.found = true; s.mesh.visible = false;
-        SH.Economy.shellsFound.push(s.idx);
-        var n = Ac.shellCount();
-        SH.Economy.stats.shells = n;
-        if (SH.Audio) SH.Audio.collect();
-        if (SH.HUD) SH.HUD.centerMsg('Shell found! ' + n + '/' + C.SHELL_COUNT, 1.8);
-        if (n % C.SHELL_REWARD_EVERY === 0) SH.Economy.addCash(C.SHELL_REWARD, 'Shell bonus');
-        SH.Economy.addXP(4); SH.Economy.save();
+
+  var BEACON_POINTS = [
+    { x: -200, z: 240 }, { x: -80, z: 130 }, { x: 60, z: 240 },
+    { x: 180, z: 120 }, { x: 120, z: -60 }, { x: -40, z: -160 },
+    { x: -190, z: -40 }, { x: 0, z: 60 }, { x: 190, z: -170 },
+    { x: -120, z: 190 }
+  ];
+
+  function shellPositions(rng) {
+    var out = [];
+    var i;
+    for (i = 0; i < 30; i++) {
+      var t = i / 30;
+      var x = -230 + t * 460 + rng.range(-8, 8);
+      var z;
+      if (i % 5 === 4) {
+        // A few shells hide on the pier and in the shallows.
+        x = cfg.WORLD.pierX + rng.range(-4, 4);
+        z = cfg.WORLD.beachZ + rng.range(10, 80);
+      } else if (i % 3 === 2) {
+        z = cfg.WORLD.beachZ + rng.range(24, 60);
+      } else {
+        z = cfg.WORLD.beachZ + rng.range(-6, 22);
+      }
+      out.push({ id: "shell-" + i, x: x, z: z });
+    }
+    return out;
+  }
+
+  function buildShellMesh() {
+    var geo = new THREE.SphereGeometry(0.55, 8, 6);
+    var material = new THREE.MeshLambertMaterial({
+      color: 0xffe3ee,
+      emissive: 0xcc7799,
+      emissiveIntensity: 0.35
+    });
+    var mesh = new THREE.Mesh(geo, material);
+    mesh.scale.y = 0.55;
+    return mesh;
+  }
+
+  function buildPostcardMesh() {
+    var geo = new THREE.BoxGeometry(1.5, 2.1, 0.12);
+    var material = new THREE.MeshLambertMaterial({
+      color: 0xf5f0e6,
+      emissive: 0x888866,
+      emissiveIntensity: 0.3
+    });
+    return new THREE.Mesh(geo, material);
+  }
+
+  function buildBeaconMesh() {
+    var geo = new THREE.CylinderGeometry(2.6, 2.6, 30, 14, 1, true);
+    var material = new THREE.MeshBasicMaterial({
+      color: 0x5df2ff,
+      transparent: true,
+      opacity: 0.35,
+      side: THREE.DoubleSide,
+      depthWrite: false
+    });
+    var mesh = new THREE.Mesh(geo, material);
+    mesh.visible = false;
+    return mesh;
+  }
+
+  function init(scene, rng) {
+    var save = window.SH.economy ? window.SH.economy.save : { shells: {}, postcards: {} };
+    var positions = shellPositions(rng);
+    var i;
+    for (i = 0; i < positions.length; i++) {
+      var mesh = buildShellMesh();
+      mesh.position.set(positions[i].x, 0.4, positions[i].z);
+      mesh.visible = !save.shells[positions[i].id];
+      scene.add(mesh);
+      activities.shells.push({ def: positions[i], mesh: mesh });
+    }
+    for (i = 0; i < POSTCARD_SPOTS.length; i++) {
+      var card = buildPostcardMesh();
+      card.position.set(POSTCARD_SPOTS[i].x, 1.2, POSTCARD_SPOTS[i].z);
+      card.visible = !save.postcards[POSTCARD_SPOTS[i].id];
+      scene.add(card);
+      activities.postcards.push({ def: POSTCARD_SPOTS[i], mesh: card });
+    }
+    activities.beacon = buildBeaconMesh();
+    scene.add(activities.beacon);
+  }
+
+  function collectShell(entry) {
+    var eco = window.SH.economy;
+    if (!eco || eco.save.shells[entry.def.id]) {
+      return;
+    }
+    eco.save.shells[entry.def.id] = true;
+    entry.mesh.visible = false;
+    var count = Object.keys(eco.save.shells).length;
+    eco.addCash(10);
+    eco.addXP(4);
+    eco.persist();
+    if (window.SH.hud) {
+      window.SH.hud.toast("Seashell " + count + " of 30 collected · $10");
+    }
+    if (window.SH.audio) {
+      window.SH.audio.sfx.pickup();
+    }
+    if (count === 30) {
+      eco.addCash(500);
+      if (window.SH.hud) {
+        window.SH.hud.toast("All 30 seashells! Bonus $500");
       }
     }
-    for (var j = 0; j < Ac.cards.length; j++) {
-      var cd = Ac.cards[j];
-      cd.mesh.rotation.z = t * 0.4;
-      if (!cd.found && U.dist2d(p.x, p.z, cd.x, cd.z) < 2.6) {
-        cd.found = true; SH.Economy.postcardsFound.push(cd.idx); SH.Economy.stats.postcards++;
-        SH.Economy.addCash(C.POSTCARD_REWARD, 'Postcard: ' + cd.name); SH.Economy.addXP(12);
-        if (SH.HUD) SH.HUD.centerMsg('Postcard collected: ' + cd.name, 2.4);
-        if (SH.Audio) SH.Audio.collect();
-        SH.Economy.save();
+  }
+
+  function collectPostcard(entry) {
+    var eco = window.SH.economy;
+    if (!eco || eco.save.postcards[entry.def.id]) {
+      return;
+    }
+    eco.save.postcards[entry.def.id] = true;
+    entry.mesh.visible = false;
+    var count = Object.keys(eco.save.postcards).length;
+    eco.addCash(60);
+    eco.addXP(20);
+    eco.persist();
+    if (window.SH.hud) {
+      window.SH.hud.toast("Postcard found: " + entry.def.name + " (" + count + " of 6) · $60");
+    }
+    if (window.SH.audio) {
+      window.SH.audio.sfx.success();
+    }
+  }
+
+  function startBeaconTrial(rng) {
+    var order = BEACON_POINTS.slice();
+    rng.shuffle(order);
+    activities.beaconOrder = order.slice(0, 6);
+    activities.beaconIndex = 0;
+    activities.beaconTimer = 95;
+    activities.beaconActive = true;
+    placeBeacon();
+    if (window.SH.hud) {
+      window.SH.hud.toast("Beacon trial started — chase the cyan pillars");
+    }
+  }
+
+  function placeBeacon() {
+    var point = activities.beaconOrder[activities.beaconIndex];
+    if (!point) {
+      activities.beacon.visible = false;
+      return;
+    }
+    activities.beacon.position.set(point.x, 15, point.z);
+    activities.beacon.visible = true;
+  }
+
+  function updateBeacon(dt, player) {
+    if (!activities.beaconActive) {
+      if (player.state === "foot" &&
+          cfg.dist2d(player.pos.x, player.pos.z, -196, 236) < 6 &&
+          window.SH.hud) {
+        window.SH.hud.prompt("Press E to start the beacon time-trial");
+      }
+      return;
+    }
+    activities.beaconTimer -= dt;
+    activities.beacon.rotation.y += dt;
+    if (activities.beaconTimer <= 0) {
+      activities.beaconActive = false;
+      activities.beacon.visible = false;
+      if (window.SH.hud) {
+        window.SH.hud.toast("Beacon trial failed — out of time");
+      }
+      if (window.SH.audio) {
+        window.SH.audio.sfx.fail();
+      }
+      return;
+    }
+    var point = activities.beaconOrder[activities.beaconIndex];
+    var focus = player.focusPos();
+    if (window.SH.hud) {
+      window.SH.hud.setSub("Beacon " + (activities.beaconIndex + 1) + " of " +
+        activities.beaconOrder.length + " · " + Math.ceil(activities.beaconTimer) + "s");
+    }
+    if (cfg.dist2d(focus.x, focus.z, point.x, point.z) < 9) {
+      activities.beaconIndex += 1;
+      activities.beaconTimer += 14;
+      if (window.SH.audio) {
+        window.SH.audio.sfx.checkpoint();
+      }
+      if (activities.beaconIndex >= activities.beaconOrder.length) {
+        activities.beaconActive = false;
+        activities.beacon.visible = false;
+        if (window.SH.economy) {
+          window.SH.economy.addCash(300);
+          window.SH.economy.addXP(45);
+        }
+        if (window.SH.hud) {
+          window.SH.hud.toast("Beacon trial complete · $300");
+        }
+        if (window.SH.audio) {
+          window.SH.audio.sfx.success();
+        }
+      } else {
+        placeBeacon();
       }
     }
-    // Beacon cycle: appear, give the player 45s to reach it, repeat.
-    Ac.beaconTimer -= dt;
-    if (!Ac.beaconAt && Ac.beaconTimer <= 0) {
-      var rp = SH.City.nearestRoadPoint(-380 + Math.random() * 680, -380 + Math.random() * 760);
-      Ac.beaconAt = { x: rp.x + 4, z: rp.z + 4 };
-      Ac.beacon.position.x = Ac.beaconAt.x; Ac.beacon.position.z = Ac.beaconAt.z;
-      Ac.beacon.visible = true; Ac.beaconLeft = 45;
-      if (SH.HUD) SH.HUD.centerMsg('Time-trial beacon appeared! Check the minimap.', 2.2);
-    }
-    if (Ac.beaconAt) {
-      Ac.beaconLeft -= dt;
-      if (U.dist2d(p.x, p.z, Ac.beaconAt.x, Ac.beaconAt.z) < 6) {
-        SH.Economy.addCash(150, 'Beacon trial'); SH.Economy.addXP(15);
-        if (SH.HUD) SH.HUD.centerMsg('Beacon reached with ' + Math.ceil(Ac.beaconLeft) + 's to spare!', 2.2);
-        Ac.beaconAt = null; Ac.beacon.visible = false; Ac.beaconTimer = 35;
-      } else if (Ac.beaconLeft <= 0) {
-        Ac.beaconAt = null; Ac.beacon.visible = false; Ac.beaconTimer = 20;
+  }
+
+  function update(dt, player, rng) {
+    var focus = player.focusPos();
+    var i;
+    for (i = 0; i < activities.shells.length; i++) {
+      var shell = activities.shells[i];
+      if (!shell.mesh.visible) {
+        continue;
+      }
+      shell.mesh.rotation.y += dt * 1.5;
+      if (cfg.dist2d(focus.x, focus.z, shell.def.x, shell.def.z) < 2.4) {
+        collectShell(shell);
       }
     }
-  };
-})(window.SH);
+    for (i = 0; i < activities.postcards.length; i++) {
+      var card = activities.postcards[i];
+      if (!card.mesh.visible) {
+        continue;
+      }
+      card.mesh.rotation.y += dt * 0.9;
+      if (player.state === "foot" &&
+          cfg.dist2d(player.pos.x, player.pos.z, card.def.x, card.def.z) < 3) {
+        collectPostcard(card);
+      }
+    }
+    updateBeacon(dt, player);
+  }
+
+  function tryInteract(rng, player) {
+    if (!activities.beaconActive &&
+        cfg.dist2d(player.pos.x, player.pos.z, -196, 236) < 6) {
+      startBeaconTrial(rng);
+      return true;
+    }
+    return false;
+  }
+
+  function counts() {
+    var eco = window.SH.economy;
+    if (!eco) {
+      return { shells: 0, postcards: 0, stunts: 0 };
+    }
+    return {
+      shells: Object.keys(eco.save.shells).length,
+      postcards: Object.keys(eco.save.postcards).length,
+      stunts: Object.keys(eco.save.stunts).length
+    };
+  }
+
+  activities.init = init;
+  activities.update = update;
+  activities.tryInteract = tryInteract;
+  activities.startBeaconTrial = startBeaconTrial;
+  activities.counts = counts;
+  activities.postcardSpots = POSTCARD_SPOTS;
+  activities.beaconPoints = BEACON_POINTS;
+  window.SH.activities = activities;
+})();

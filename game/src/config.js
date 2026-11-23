@@ -1,64 +1,229 @@
-// Solstice Heat - Round 12 configuration. All tuning in one place.
-window.SH = window.SH || {};
-(function (SH) {
-  'use strict';
-  var C = {}; SH.Config = C;
-  C.WORLD_SIZE = 960; C.BLOCK = 80; C.ROAD_W = 16; C.SIDEWALK_W = 4;
-  C.BEACH_X = 330; C.WATER_X = 400; C.SEED_DEFAULT = 7;
-  C.DISTRICTS = [
-    { name: 'Boardwalk', cx: 360, cz: 0, r: 150, minH: 8, maxH: 22, density: 0.55 },
-    { name: 'Downtown', cx: -60, cz: -60, r: 190, minH: 26, maxH: 74, density: 0.92 },
-    { name: 'Neon Mile', cx: -40, cz: 190, r: 150, minH: 14, maxH: 40, density: 0.85 },
-    { name: 'Marina', cx: 250, cz: -260, r: 140, minH: 6, maxH: 18, density: 0.6 },
-    { name: 'Portside', cx: -280, cz: -280, r: 150, minH: 10, maxH: 26, density: 0.7 },
-    { name: 'Old Town', cx: -280, cz: 130, r: 140, minH: 8, maxH: 20, density: 0.8 },
-    { name: 'The Hills', cx: 120, cz: 330, r: 150, minH: 6, maxH: 16, density: 0.5 }
+// Solstice Heat — config.js
+// Global tuning constants, district definitions and shared helpers.
+// Every system reads its numbers from window.SH.config so the whole
+// game can be balanced from one place.
+(function () {
+  "use strict";
+  window.SH = window.SH || {};
+
+  var config = {};
+
+  // World dimensions -------------------------------------------------
+  config.WORLD = {
+    blockSize: 60,
+    roadWidth: 16,
+    blocksX: 8,
+    blocksZ: 8,
+    seaLevel: 0,
+    beachZ: 300,
+    pierX: 40,
+    pierLength: 90
+  };
+  config.WORLD.width = config.WORLD.blocksX * config.WORLD.blockSize;
+  config.WORLD.depth = config.WORLD.blocksZ * config.WORLD.blockSize;
+
+  // Time -------------------------------------------------------------
+  config.TIME = {
+    startHour: 15.5,
+    dayLengthSeconds: 600,
+    dawnHour: 6,
+    noonHour: 12,
+    duskHour: 19,
+    midnightHour: 0
+  };
+
+  // Player -----------------------------------------------------------
+  config.PLAYER = {
+    walkSpeed: 6,
+    sprintSpeed: 10,
+    swimSpeed: 4,
+    turnRate: 3.2,
+    radius: 0.7,
+    maxHealth: 100,
+    maxArmor: 100,
+    meleeRange: 2.2,
+    meleeDamage: 18,
+    meleeCooldown: 0.45,
+    pistolDamage: 26,
+    pistolRange: 60,
+    pistolCooldown: 0.28,
+    pistolAmmoStart: 48,
+    regenDelay: 6,
+    regenRate: 4
+  };
+
+  // Vehicles ---------------------------------------------------------
+  config.VEHICLE = {
+    accel: 22,
+    brake: 34,
+    reverseAccel: 10,
+    maxSpeed: 46,
+    maxReverse: 12,
+    steerRate: 1.9,
+    grip: 8.5,
+    driftGrip: 2.4,
+    drag: 0.35,
+    damageScale: 1.0,
+    trafficCount: 14,
+    trafficSpeed: 13
+  };
+
+  // Police -----------------------------------------------------------
+  config.POLICE = {
+    maxStars: 5,
+    heatPerCrime: 22,
+    heatDecayPerSecond: 2.2,
+    hiddenDecayBonus: 2.5,
+    bustFillRate: 26,
+    bustDrainRate: 18,
+    bustDistance: 3.2,
+    copSpeed: 15,
+    copCarSpeed: 40,
+    roadblockStars: 3,
+    helicopterStars: 4,
+    spawnInterval: 4
+  };
+
+  // Economy ----------------------------------------------------------
+  config.ECONOMY = {
+    startCash: 120,
+    startBank: 0,
+    hospitalCost: 150,
+    bustFinePercent: 0.25,
+    ranks: [
+      { name: "Runner", xp: 0 },
+      { name: "Courier", xp: 150 },
+      { name: "Wheelman", xp: 400 },
+      { name: "Smuggler", xp: 900 },
+      { name: "Kingpin", xp: 1800 }
+    ],
+    shop: [
+      { id: "snack", name: "Snack Bar", price: 15, kind: "health", amount: 30 },
+      { id: "meal", name: "Pier Meal", price: 40, kind: "health", amount: 70 },
+      { id: "vest", name: "Kevlar Vest", price: 120, kind: "armor", amount: 60 },
+      { id: "plate", name: "Plate Carrier", price: 220, kind: "armor", amount: 100 },
+      { id: "ammo", name: "Pistol Ammo x24", price: 35, kind: "ammo", amount: 24 },
+      { id: "repair", name: "Full Repair", price: 90, kind: "repair", amount: 100 },
+      { id: "paint", name: "Respray", price: 60, kind: "heat", amount: 40 },
+      { id: "deposit", name: "Deposit Cash", price: 0, kind: "deposit", amount: 0 }
+    ]
+  };
+
+  // Districts --------------------------------------------------------
+  config.DISTRICTS = [
+    {
+      id: "boardwalk",
+      name: "Boardwalk",
+      minX: -240, maxX: 240, minZ: 190, maxZ: 300,
+      tint: 0xf2c078, density: 0.5, palmHeavy: true
+    },
+    {
+      id: "neonmile",
+      name: "Neon Mile",
+      minX: -120, maxX: 120, minZ: 60, maxZ: 190,
+      tint: 0xff5da2, density: 1.0, palmHeavy: false
+    },
+    {
+      id: "marina",
+      name: "Marina",
+      minX: 120, maxX: 240, minZ: 60, maxZ: 190,
+      tint: 0x6ec6d8, density: 0.6, palmHeavy: true
+    },
+    {
+      id: "oldtown",
+      name: "Old Town",
+      minX: -240, maxX: -120, minZ: -60, maxZ: 60,
+      tint: 0xd8a06a, density: 0.8, palmHeavy: false
+    },
+    {
+      id: "palmheights",
+      name: "Palm Heights",
+      minX: -120, maxX: 120, minZ: -190, maxZ: -60,
+      tint: 0x9fd86e, density: 0.7, palmHeavy: true
+    },
+    {
+      id: "port",
+      name: "Port",
+      minX: 120, maxX: 240, minZ: -190, maxZ: -60,
+      tint: 0x8a93a8, density: 0.55, palmHeavy: false
+    },
+    {
+      id: "university",
+      name: "University",
+      minX: -240, maxX: -120, minZ: -190, maxZ: -60,
+      tint: 0xb49fe0, density: 0.65, palmHeavy: true
+    }
   ];
-  C.STREET_NAMES_NS = ['Calle Ocho','Solstice Ave','Palmera Blvd','Neon Way','Marina Drive','Canal Street','Deco Lane','Sunset Strip','Harbor Road','Flamingo Court','Vice Avenue','Coral Way'];
-  C.STREET_NAMES_EW = ['Ocean Drive','Biscayne Row','Golden Hour Blvd','Starfish Lane','Pier Avenue','Mango Street','Tropicana Way','Seabreeze Blvd','Lummus Park Rd','Collins Avenue','Meridian Ave','Palm Court'];
-  C.BUILDING_COLORS = [0xf7c8d8,0xfde8c9,0xbfe3dd,0xcfe0f5,0xf9e2ae,0xe6d7f2,0xffd1b3,0xd8f0c8,0xfff3f0,0xb8e0e8,0xf5b8c4,0xaed9c5];
-  C.ROOF_COLORS = [0xe88ca0,0x7fb5b0,0xd9a05b,0x8fa8c8,0xc97b8a,0x6b9e8f];
-  C.NEON_COLORS = [0xff2e88,0x00e5ff,0xffe14d,0x7cff4d,0xff7a1a,0xb44dff];
-  C.CAR_COLORS = [0xe63946,0xf1fa8c,0x2ec4b6,0xff9f1c,0x4361ee,0xf72585,0xffffff,0x222222,0x90e0a8,0xffd166,0x8ecae6,0xef476f];
-  C.SHIRT_COLORS = [0xff6b9d,0xffd93d,0x6bcb77,0x4d96ff,0xff9f45,0x9b5de5,0x00f5d4,0xf15bb5];
-  C.CAR_MODELS = [
-    { name: 'Solstice Convertible', w: 1.9, l: 4.4, h: 0.62, cabinH: 0.5, topSpeed: 34, accel: 16, grip: 0.92 },
-    { name: 'Deco Sedan', w: 1.85, l: 4.6, h: 0.66, cabinH: 0.62, topSpeed: 30, accel: 13, grip: 0.9 },
-    { name: 'Marina Coupe', w: 1.8, l: 4.2, h: 0.6, cabinH: 0.5, topSpeed: 38, accel: 19, grip: 0.94 },
-    { name: 'Portside Pickup', w: 2.0, l: 5.0, h: 0.8, cabinH: 0.66, topSpeed: 27, accel: 12, grip: 0.86 },
-    { name: 'Neon Hatch', w: 1.7, l: 3.9, h: 0.64, cabinH: 0.6, topSpeed: 29, accel: 14, grip: 0.9 },
-    { name: 'Hills Van', w: 2.0, l: 5.2, h: 1.0, cabinH: 0.8, topSpeed: 25, accel: 11, grip: 0.84 },
-    { name: 'SBPD Interceptor', w: 1.9, l: 4.7, h: 0.66, cabinH: 0.6, topSpeed: 40, accel: 20, grip: 0.95, police: true },
-    { name: 'Taxi Cab', w: 1.85, l: 4.6, h: 0.66, cabinH: 0.62, topSpeed: 30, accel: 13, grip: 0.9, taxi: true }
+
+  config.districtAt = function (x, z) {
+    var i;
+    var d;
+    for (i = 0; i < config.DISTRICTS.length; i++) {
+      d = config.DISTRICTS[i];
+      if (x >= d.minX && x <= d.maxX && z >= d.minZ && z <= d.maxZ) {
+        return d;
+      }
+    }
+    return config.DISTRICTS[0];
+  };
+
+  // Building palettes --------------------------------------------------
+  config.PALETTES = {
+    deco: [0xf7e3b0, 0xf2c078, 0xe88ca0, 0x9fd8d0, 0xf5f0e6, 0xd8b4e2],
+    neon: [0xff5da2, 0x5df2ff, 0xffe95d, 0x9dff5d, 0xff8a5d],
+    trim: [0x8a5a2b, 0x2b6a8a, 0x6a2b4a, 0x2b8a5a, 0x555f6e]
+  };
+
+  // Car colours --------------------------------------------------------
+  config.CAR_COLORS = [
+    0xe2452c, 0x2c7de2, 0xf2c018, 0x38b24a, 0xf5f0e6,
+    0x22242c, 0x8a2be2, 0xff7f2c, 0x2cd8c8, 0xc0c6ce
   ];
-  C.PLAYER = { walkSpeed: 5.2, runSpeed: 9.5, swimSpeed: 3.4, radius: 0.55, maxHealth: 100, meleeRange: 2.2, meleeDamage: 18, pistolAmmoStart: 24, pistolDamage: 34, enterRange: 4.2, bustTime: 2.6 };
-  C.POLICE = { spawnInterval: 2.2, maxCarsByStars: [0,2,3,5,7,9], heliStars: 4, roadblockStars: 3, heatDecayPerSec: 0.05, bustRange: 7, sightRange: 46, loseSightAfter: 6 };
-  C.RANKS = [ { name: 'Street Rat', xp: 0 }, { name: 'Runner', xp: 120 }, { name: 'Fixer', xp: 320 }, { name: 'Operator', xp: 700 }, { name: 'Solstice Legend', xp: 1400 } ];
-  C.SHOP = [
-    { id: 'tires', name: 'Sport Tires', price: 350, desc: 'Better grip for every car you drive.' },
-    { id: 'armor', name: 'Car Armor', price: 600, desc: 'Your current ride takes half damage.' },
-    { id: 'medkit', name: 'Medkit', price: 80, desc: 'Restore 50 health instantly.' },
-    { id: 'shirt', name: 'New Hawaiian Shirt', price: 120, desc: 'Fresh colours, fresh start.' },
-    { id: 'paint', name: 'Neon Respray', price: 200, desc: 'Respray your current car neon.' },
-    { id: 'ammo', name: 'Pistol Ammo x12', price: 60, desc: 'Twelve more rounds.' }
-  ];
-  C.FOODS = [ { name: 'Cuban Sandwich', price: 18, heal: 25 }, { name: 'Key Lime Pie', price: 12, heal: 15 }, { name: 'Cafecito', price: 8, heal: 8 } ];
-  C.WEATHER_TYPES = ['clear','breeze','overcast','rain','storm','fog'];
-  C.WEATHER_WEIGHTS = [0.34,0.2,0.16,0.14,0.07,0.09];
-  C.DAY_LENGTH_SEC = 480; C.START_HOUR = 17.4;
-  C.SHELL_COUNT = 30; C.POSTCARD_COUNT = 6; C.STUNT_COUNT = 8;
-  C.SHELL_REWARD_EVERY = 10; C.SHELL_REWARD = 250; C.POSTCARD_REWARD = 120; C.STUNT_BASE_REWARD = 15;
-  C.RACE_REWARDS = [500,300,150,50]; C.RACE_XP = [60,40,25,10];
-  C.TICKER = [
-    'SBPD reminds drivers that the Neon Mile is not a racetrack.',
-    'Golden hour over Solstice Bay rated best sunset on the coast, again.',
-    'Marina Pier festival this weekend: food trucks and live synth.',
-    'Beach crews report thirty lost shells washed up around the bay.',
-    'Traffic: smooth on Calle Ocho, slow near the Portside cranes.',
-    'Local fixer Marisol Vega denies everything, charmingly.',
-    'Weather desk: watch the sky, Solstice storms roll in fast.',
-    'Stunt ramps inspected and declared technically legal-ish.'
-  ];
-  C.RADIO_STATIONS = [ { name: 'SOLSTICE FM', kind: 'synth' }, { name: 'BAYWAVE NEWS', kind: 'news' } ];
-  C.SAVE_KEY = 'solstice-heat-r12-save'; C.AUTOSAVE_SEC = 20;
-})(window.SH);
+
+  // Weather kinds ------------------------------------------------------
+  config.WEATHER_KINDS = ["clear", "haze", "rain", "storm", "fog"];
+
+  // Save key -----------------------------------------------------------
+  config.SAVE_KEY = "solstice-heat-save-v1";
+
+  // Small numeric helpers ----------------------------------------------
+  config.clamp = function (v, lo, hi) {
+    if (v < lo) { return lo; }
+    if (v > hi) { return hi; }
+    return v;
+  };
+  config.lerp = function (a, b, t) {
+    return a + (b - a) * t;
+  };
+  config.dist2d = function (ax, az, bx, bz) {
+    var dx = ax - bx;
+    var dz = az - bz;
+    return Math.sqrt(dx * dx + dz * dz);
+  };
+  config.angleLerp = function (a, b, t) {
+    var d = (b - a) % (Math.PI * 2);
+    if (d > Math.PI) { d -= Math.PI * 2; }
+    if (d < -Math.PI) { d += Math.PI * 2; }
+    return a + d * t;
+  };
+  config.formatMoney = function (n) {
+    var s = String(Math.floor(Math.abs(n)));
+    var out = "";
+    var i;
+    for (i = 0; i < s.length; i++) {
+      out += s[i];
+      var remaining = s.length - i - 1;
+      if (remaining > 0 && remaining % 3 === 0) { out += ","; }
+    }
+    return (n < 0 ? "-$" : "$") + out;
+  };
+  config.formatClock = function (hourFloat) {
+    var h = Math.floor(hourFloat) % 24;
+    var m = Math.floor((hourFloat - Math.floor(hourFloat)) * 60);
+    var hs = h < 10 ? "0" + h : String(h);
+    var ms = m < 10 ? "0" + m : String(m);
+    return hs + ":" + ms;
+  };
+
+  window.SH.config = config;
+})();

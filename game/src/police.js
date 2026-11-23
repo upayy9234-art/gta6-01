@@ -1,136 +1,464 @@
-// Solstice Heat - SBPD: wanted stars, pursuit AI, roadblocks,
-// helicopter spotlight, bust meter and heat decay when hidden.
-window.SH = window.SH || {};
-(function (SH) {
-  'use strict';
-  var U = SH.U, C = SH.Config;
-  var Po = { stars: 0, heat: 0, units: [], timer: 0, bust: 0, lastSeen: 99, heli: null, blocks: [] };
-  SH.Police = Po;
-  Po.reportCrime = function (kind, x, z, weight) {
-    var witnessed = true;
-    // Crimes are worth more heat when a unit or camera district sees them.
-    Po.heat += weight * (kind === 'shots' || kind === 'assault' ? 1.2 : 1);
-    var thresholds = [0.6, 1.8, 3.4, 5.4, 8];
-    var s = 0; for (var i = 0; i < thresholds.length; i++) if (Po.heat >= thresholds[i]) s = i + 1;
-    if (s > Po.stars) {
-      Po.stars = s;
-      if (SH.HUD) SH.HUD.radioChatter(s >= 3 ? 'Dispatch: all units, suspect escalating in ' + SH.City.districtNameAt(x, z) + '.' : 'Dispatch: units respond, suspect in ' + SH.City.districtNameAt(x, z) + '.');
+// Solstice Heat — police.js
+// The wanted system: heat builds from reported crimes and decays
+// while the player stays unseen. Stars unlock escalating responses —
+// foot officers, pursuit cars, roadblocks at three stars and a
+// helicopter spotlight at four. Standing next to an officer while
+// wanted fills the bust meter; filling it (or losing all health in
+// a chase) ends the run with a fine.
+(function () {
+  "use strict";
+  window.SH = window.SH || {};
+
+  var cfg = window.SH.config;
+  var PC = cfg.POLICE;
+
+  var police = {
+    heat: 0,
+    stars: 0,
+    bust: 0,
+    officers: [],
+    cars: [],
+    heli: null,
+    heliLight: null,
+    spawnTimer: 0,
+    seenTimer: 0,
+    lastKnown: null,
+    roadblocks: [],
+    scene: null
+  };
+
+  var CRIME_HEAT = {
+    shots: 30,
+    assault: 24,
+    theft: 26,
+    crash: 10,
+    speeding: 4,
+    trespass: 8,
+    mission: 18
+  };
+
+  function starsForHeat(heat) {
+    if (heat <= 0) { return 0; }
+    if (heat < 30) { return 1; }
+    if (heat < 55) { return 2; }
+    if (heat < 80) { return 3; }
+    if (heat < 110) { return 4; }
+    return 5;
+  }
+
+  function reportCrime(kind, pos) {
+    var add = CRIME_HEAT[kind] || 8;
+    police.heat = cfg.clamp(police.heat + add, 0, 140);
+    police.stars = starsForHeat(police.heat);
+    if (pos) {
+      police.lastKnown = { x: pos.x, z: pos.z };
     }
-    Po.lastSeen = 0;
-    return witnessed;
-  };
-  Po.setStars = function (n) { Po.stars = U.clamp(n, 0, 5); Po.heat = [0, 0.7, 1.9, 3.5, 5.5, 8.2][Po.stars]; };
-  Po.clear = function () { Po.stars = 0; Po.heat = 0; Po.bust = 0; };
-  Po.buildHeli = function (scene) {
-    var g = new THREE.Group();
-    var body = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.6, 5.2), new THREE.MeshLambertMaterial({ color: 0x223355 }));
-    g.add(body);
-    var tail = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 4.4), new THREE.MeshLambertMaterial({ color: 0x223355 }));
-    tail.position.set(0, 0.3, -4.4); g.add(tail);
-    var rotor = new THREE.Mesh(new THREE.BoxGeometry(9, 0.08, 0.5), new THREE.MeshLambertMaterial({ color: 0x111111 }));
-    rotor.position.y = 1.1; g.add(rotor); g.userData.rotor = rotor;
-    var cone = new THREE.Mesh(new THREE.ConeGeometry(7, 26, 16, 1, true), new THREE.MeshBasicMaterial({ color: 0xfff2b0, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false }));
-    cone.position.y = -13.5; g.add(cone);
-    var spot = new THREE.Mesh(new THREE.CircleGeometry(6.6, 16), new THREE.MeshBasicMaterial({ color: 0xfff2b0, transparent: true, opacity: 0.22 }));
-    spot.rotation.x = -Math.PI / 2; spot.position.y = -25.8; g.add(spot);
-    g.visible = false; scene.add(g);
-    Po.heli = g; Po.heliPos = { x: 0, z: 0 };
-    return g;
-  };
-  function spawnUnit(scene, playerPos) {
-    var ang = Math.random() * Math.PI * 2, dist = 55 + Math.random() * 25;
-    var x = U.clamp(playerPos.x + Math.sin(ang) * dist, -420, 430);
-    var z = U.clamp(playerPos.z + Math.cos(ang) * dist, -420, 420);
-    var rp = SH.City.nearestRoadPoint(x, z);
-    var car = SH.Vehicles.spawnPoliceCar(scene, rp.x + 3, rp.z);
-    Po.units.push(car);
+    if (window.SH.people && pos) {
+      window.SH.people.scare(pos, 10);
+    }
+  }
+
+  function clearWanted(reason) {
+    police.heat = 0;
+    police.stars = 0;
+    police.bust = 0;
+    despawnAll();
+  }
+
+  function buildOfficerMesh() {
+    var group = new THREE.Group();
+    var uniform = new THREE.MeshLambertMaterial({ color: 0x1a2a4a });
+    var skin = new THREE.MeshLambertMaterial({ color: 0xd8a878 });
+    var torso = new THREE.Mesh(new THREE.BoxGeometry(0.64, 0.74, 0.36), uniform);
+    torso.position.y = 1.07;
+    group.add(torso);
+    var head = new THREE.Mesh(new THREE.BoxGeometry(0.37, 0.41, 0.37), skin);
+    head.position.y = 1.68;
+    group.add(head);
+    var cap = new THREE.Mesh(
+      new THREE.BoxGeometry(0.43, 0.11, 0.43),
+      new THREE.MeshLambertMaterial({ color: 0x0f1c33 })
+    );
+    cap.position.y = 1.93;
+    group.add(cap);
+    var legL = new THREE.Mesh(new THREE.BoxGeometry(0.23, 0.7, 0.25), uniform);
+    legL.position.set(-0.16, 0.36, 0);
+    group.add(legL);
+    var legR = legL.clone();
+    legR.position.x = 0.16;
+    group.add(legR);
+    group.userData.parts = { legL: legL, legR: legR };
+    return group;
+  }
+
+  function spawnOfficer(scene, nearPos, rng) {
+    var angle = rng.range(0, Math.PI * 2);
+    var dist = rng.range(26, 40);
+    var mesh = buildOfficerMesh();
+    var officer = {
+      mesh: mesh,
+      pos: mesh.position,
+      heading: 0,
+      phase: rng.range(0, 6)
+    };
+    officer.pos.set(
+      nearPos.x + Math.sin(angle) * dist,
+      0,
+      nearPos.z + Math.cos(angle) * dist
+    );
+    scene.add(mesh);
+    police.officers.push(officer);
+    return officer;
+  }
+
+  function spawnCopCar(scene, nearPos, rng) {
+    var angle = rng.range(0, Math.PI * 2);
+    var dist = rng.range(38, 55);
+    var car = window.SH.vehicles.createCar(scene, {
+      x: nearPos.x + Math.sin(angle) * dist,
+      z: nearPos.z + Math.cos(angle) * dist,
+      heading: angle,
+      color: 0xf5f0e6,
+      isCop: true
+    });
+    car.ai = { pursuit: true };
+    police.cars.push(car);
     return car;
   }
-  function makeRoadblock(scene, playerPos) {
-    Po.clearBlocks(scene);
-    var rp = SH.City.nearestRoadPoint(playerPos.x, playerPos.z);
-    for (var i = -1; i <= 1; i += 2) {
-      var car = SH.Vehicles.spawnPoliceCar(scene, rp.x + i * 5, rp.z + 26);
-      car.heading = Math.PI / 2; car.parked = true; car.ai.roadblock = true;
-      Po.blocks.push(car);
-    }
-    if (SH.HUD) SH.HUD.radioChatter('Dispatch: roadblock set near ' + SH.City.districtNameAt(playerPos.x, playerPos.z) + '.');
+
+  function buildHelicopter(scene) {
+    var group = new THREE.Group();
+    var body = new THREE.Mesh(
+      new THREE.BoxGeometry(2.4, 1.6, 5.2),
+      new THREE.MeshLambertMaterial({ color: 0x22242c })
+    );
+    group.add(body);
+    var tail = new THREE.Mesh(
+      new THREE.BoxGeometry(0.5, 0.5, 4.4),
+      new THREE.MeshLambertMaterial({ color: 0x22242c })
+    );
+    tail.position.set(0, 0.3, 4.4);
+    group.add(tail);
+    var rotor = new THREE.Mesh(
+      new THREE.BoxGeometry(9, 0.08, 0.5),
+      new THREE.MeshLambertMaterial({ color: 0x11131a })
+    );
+    rotor.position.y = 1.1;
+    rotor.name = "rotor";
+    group.add(rotor);
+    var spot = new THREE.SpotLight(0xfff2c8, 0, 90, 0.42, 0.5);
+    spot.position.set(0, -0.8, 0);
+    group.add(spot);
+    group.add(spot.target);
+    spot.target.position.set(0, -30, 0);
+    group.visible = false;
+    scene.add(group);
+    police.heli = group;
+    police.heliLight = spot;
+    return group;
   }
-  Po.clearBlocks = function (scene) {
-    Po.blocks.forEach(function (c) { SH.Vehicles.removeCar(scene, c); });
-    Po.blocks = [];
-  };
-  Po.update = function (dt, scene, player) {
-    var ppos = player.pos();
-    Po.lastSeen += dt;
-    // Can any unit see the player?
-    var seen = Po.stars > 0 && Po.units.some(function (u) { return U.dist2d(u.x, u.z, ppos.x, ppos.z) < C.POLICE.sightRange; });
-    if (player.car && Po.stars > 0) seen = seen || U.dist2d(ppos.x, ppos.z, ppos.x, ppos.z) >= 0 && Po.units.length > 0;
-    if (seen) Po.lastSeen = 0;
-    if (Po.lastSeen > C.POLICE.loseSightAfter && Po.stars > 0) {
-      Po.heat = Math.max(0, Po.heat - C.POLICE.heatDecayPerSec * dt * 12);
-      var thresholds = [0.6, 1.8, 3.4, 5.4, 8];
-      var s = 0; for (var i = 0; i < thresholds.length; i++) if (Po.heat >= thresholds[i]) s = i + 1;
-      if (s < Po.stars) { Po.stars = s; if (SH.HUD && s > 0) SH.HUD.radioChatter('Dispatch: losing the suspect, keep eyes open.'); }
+
+  function buildRoadblock(scene, aheadPos, heading) {
+    var group = new THREE.Group();
+    var barrierMat = new THREE.MeshLambertMaterial({ color: 0xf2782c });
+    var i;
+    for (i = 0; i < 4; i++) {
+      var barrier = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.0, 0.5), barrierMat);
+      barrier.position.set(-6 + i * 4, 0.5, 0);
+      group.add(barrier);
     }
-    // Spawn / despawn units to match wanted level.
-    Po.timer -= dt;
-    var want = C.POLICE.maxCarsByStars[Po.stars] || 0;
-    if (Po.timer <= 0) {
-      Po.timer = C.POLICE.spawnInterval;
-      if (Po.units.length < want && Po.stars > 0) spawnUnit(scene, ppos);
-    }
-    while (Po.units.length > Math.max(want, 0) && Po.stars === 0) {
-      var gone = Po.units.pop(); SH.Vehicles.removeCar(scene, gone);
-    }
-    if (Po.stars === 0 && Po.units.length) {
-      // Stand down: units drive off and despawn far away.
-      for (var k = Po.units.length - 1; k >= 0; k--) {
-        var u0 = Po.units[k];
-        if (U.dist2d(u0.x, u0.z, ppos.x, ppos.z) > 90) { SH.Vehicles.removeCar(scene, u0); Po.units.splice(k, 1); }
-      }
-    }
-    // Pursuit driving: steer at the player, ram gently, avoid buildings.
-    Po.units.forEach(function (u) {
-      if (u.ai && u.ai.roadblock) { SH.Vehicles.syncMesh(u, dt); return; }
-      var wantHeading = U.headingTo(u.x, u.z, ppos.x, ppos.z);
-      u.heading = U.angleLerp(u.heading, wantHeading, U.clamp(dt * 2.2, 0, 1));
-      var d = U.dist2d(u.x, u.z, ppos.x, ppos.z);
-      var target = d > 12 ? u.model.topSpeed * 0.96 : (player.car ? Math.abs(player.car.speed) : 4);
-      u.speed = U.damp(u.speed, target, 1.4, dt);
-      var px = u.x, pz = u.z;
-      u.x += Math.sin(u.heading) * u.speed * dt;
-      u.z += Math.cos(u.heading) * u.speed * dt;
-      if (SH.City.collide(u.x, u.z, 1.5)) { u.x = px; u.z = pz; u.heading += 0.7; u.speed *= 0.4; }
-      if (d < 3.4 && player.car && Math.abs(u.speed) > 8) { SH.Vehicles.damageCar(player.car, 4); }
-      SH.Vehicles.syncMesh(u, dt);
+    group.position.set(aheadPos.x, 0, aheadPos.z);
+    group.rotation.y = heading;
+    scene.add(group);
+    var block = {
+      mesh: group,
+      pos: group.position,
+      timer: 45
+    };
+    police.roadblocks.push(block);
+    window.SH.city.colliders.push({
+      minX: aheadPos.x - 7,
+      maxX: aheadPos.x + 7,
+      minZ: aheadPos.z - 0.6,
+      maxZ: aheadPos.z + 0.6,
+      height: 1,
+      temporary: true,
+      ref: block
     });
-    // Roadblocks at 3+ stars.
-    if (Po.stars >= C.POLICE.roadblockStars && Po.blocks.length === 0 && Math.random() < dt * 0.05) makeRoadblock(scene, ppos);
-    if (Po.stars < C.POLICE.roadblockStars && Po.blocks.length) Po.clearBlocks(scene);
-    // Helicopter at 4+ stars.
-    if (Po.heli) {
-      var show = Po.stars >= C.POLICE.heliStars;
-      Po.heli.visible = show;
-      if (show) {
-        Po.heliPos.x = U.damp(Po.heliPos.x, ppos.x, 1.2, dt);
-        Po.heliPos.z = U.damp(Po.heliPos.z, ppos.z, 1.2, dt);
-        Po.heli.position.set(Po.heliPos.x, 27, Po.heliPos.z);
-        Po.heli.userData.rotor.rotation.y += dt * 28;
-        Po.lastSeen = 0; // spotlight keeps eyes on the player
+    return block;
+  }
+
+  function despawnAll() {
+    var i;
+    for (i = 0; i < police.officers.length; i++) {
+      var o = police.officers[i];
+      if (o.mesh.parent) { o.mesh.parent.remove(o.mesh); }
+    }
+    police.officers = [];
+    for (i = 0; i < police.cars.length; i++) {
+      var car = police.cars[i];
+      var idx = window.SH.vehicles.all.indexOf(car);
+      if (idx >= 0) { window.SH.vehicles.all.splice(idx, 1); }
+      if (car.mesh.parent) { car.mesh.parent.remove(car.mesh); }
+    }
+    police.cars = [];
+    for (i = 0; i < police.roadblocks.length; i++) {
+      var b = police.roadblocks[i];
+      if (b.mesh.parent) { b.mesh.parent.remove(b.mesh); }
+    }
+    police.roadblocks = [];
+    var colliders = window.SH.city.colliders;
+    for (i = colliders.length - 1; i >= 0; i--) {
+      if (colliders[i].temporary) {
+        colliders.splice(i, 1);
       }
     }
-    // Bust meter: close unit + slow player.
-    var nearUnit = Po.units.some(function (u) { return U.dist2d(u.x, u.z, ppos.x, ppos.z) < C.POLICE.bustRange; });
-    var playerSpeed = player.car ? Math.abs(player.car.speed) : 4;
-    if (Po.stars > 0 && nearUnit && playerSpeed < 5) {
-      Po.bust += dt / C.PLAYER.bustTime;
-      if (Po.bust >= 1 && SH.Main) SH.Main.onBusted();
-    } else Po.bust = Math.max(0, Po.bust - dt * 1.4);
-  };
-  Po.nearestUnitDist = function (x, z) {
-    var bd = 1e9;
-    Po.units.forEach(function (u) { bd = Math.min(bd, U.dist2d(x, z, u.x, u.z)); });
-    return bd;
-  };
-})(window.SH);
+    if (police.heli) {
+      police.heli.visible = false;
+    }
+  }
+
+  function desiredUnits() {
+    return {
+      officers: police.stars >= 1 ? 1 + police.stars : 0,
+      cars: police.stars >= 2 ? police.stars - 1 : (police.stars === 1 ? 1 : 0)
+    };
+  }
+
+  function updateSpawning(dt, playerPos, rng) {
+    police.spawnTimer -= dt;
+    if (police.stars === 0) {
+      if (police.officers.length || police.cars.length) {
+        despawnAll();
+      }
+      return;
+    }
+    var want = desiredUnits();
+    if (police.spawnTimer <= 0) {
+      police.spawnTimer = PC.spawnInterval;
+      if (police.officers.length < want.officers) {
+        spawnOfficer(police.scene, playerPos, rng);
+      }
+      if (police.cars.length < want.cars) {
+        spawnCopCar(police.scene, playerPos, rng);
+      }
+      if (police.stars >= PC.roadblockStars && police.roadblocks.length < police.stars - 2) {
+        var ahead = {
+          x: playerPos.x - Math.sin(window.SH.player.heading) * 46,
+          z: playerPos.z - Math.cos(window.SH.player.heading) * 46
+        };
+        buildRoadblock(police.scene, ahead, window.SH.player.heading);
+      }
+    }
+    // Cull units that fall far behind.
+    var i;
+    for (i = police.officers.length - 1; i >= 0; i--) {
+      var o = police.officers[i];
+      if (cfg.dist2d(o.pos.x, o.pos.z, playerPos.x, playerPos.z) > 130) {
+        if (o.mesh.parent) { o.mesh.parent.remove(o.mesh); }
+        police.officers.splice(i, 1);
+      }
+    }
+    for (i = police.cars.length - 1; i >= 0; i--) {
+      var c = police.cars[i];
+      if (cfg.dist2d(c.pos.x, c.pos.z, playerPos.x, playerPos.z) > 170) {
+        var idx = window.SH.vehicles.all.indexOf(c);
+        if (idx >= 0) { window.SH.vehicles.all.splice(idx, 1); }
+        if (c.mesh.parent) { c.mesh.parent.remove(c.mesh); }
+        police.cars.splice(i, 1);
+      }
+    }
+    for (i = police.roadblocks.length - 1; i >= 0; i--) {
+      var b = police.roadblocks[i];
+      b.timer -= dt;
+      if (b.timer <= 0) {
+        if (b.mesh.parent) { b.mesh.parent.remove(b.mesh); }
+        police.roadblocks.splice(i, 1);
+      }
+    }
+  }
+
+  function updateOfficers(dt, player) {
+    var i;
+    var anyNear = false;
+    for (i = 0; i < police.officers.length; i++) {
+      var o = police.officers[i];
+      var dx = player.pos.x - o.pos.x;
+      var dz = player.pos.z - o.pos.z;
+      var dist = Math.sqrt(dx * dx + dz * dz);
+      o.phase += dt * 8;
+      if (dist > 2.2) {
+        var want = Math.atan2(dx, dz);
+        o.heading = cfg.angleLerp(o.heading, want, dt * 5);
+        var speed = PC.copSpeed * (dist > 20 ? 1.25 : 1);
+        o.pos.x += Math.sin(o.heading) * Math.min(speed, dist * 2) * dt;
+        o.pos.z += Math.cos(o.heading) * Math.min(speed, dist * 2) * dt;
+        window.SH.city.resolveCollision(o.pos, 0.5);
+      }
+      o.mesh.position.copy(o.pos);
+      o.mesh.rotation.y = o.heading;
+      var parts = o.mesh.userData.parts;
+      if (parts) {
+        var swing = Math.sin(o.phase) * 0.55;
+        parts.legL.rotation.x = swing;
+        parts.legR.rotation.x = -swing;
+      }
+      if (dist < PC.bustDistance && player.state === "foot") {
+        anyNear = true;
+      }
+    }
+    return anyNear;
+  }
+
+  function updateCopCars(dt, player) {
+    var i;
+    for (i = 0; i < police.cars.length; i++) {
+      var car = police.cars[i];
+      var target = player.focusPos();
+      var dx = target.x - car.pos.x;
+      var dz = target.z - car.pos.z;
+      var dist = Math.sqrt(dx * dx + dz * dz);
+      var wantHeading = Math.atan2(-dx, -dz);
+      var diff = wantHeading - car.heading;
+      while (diff > Math.PI) { diff -= Math.PI * 2; }
+      while (diff < -Math.PI) { diff += Math.PI * 2; }
+      var input = {
+        throttle: dist > 7 ? 1 : 0.2,
+        steer: cfg.clamp(-diff * 1.4, -1, 1),
+        handbrake: Math.abs(diff) > 2.2
+      };
+      var oldSpeed = car.speed;
+      window.SH.vehicles.stepPlayerCar(car, input, dt);
+      car.speed = cfg.clamp(car.speed, -10, PC.copCarSpeed);
+      if (Math.abs(oldSpeed - car.speed) > 14 && window.SH.audio) {
+        window.SH.audio.sfx.crash();
+      }
+      // Contact slows and hurts the player car / player.
+      if (dist < 3.4) {
+        if (player.state === "car" && player.car) {
+          window.SH.vehicles.damage(player.car, 4 * dt * 10);
+        } else if (player.state === "foot") {
+          player.hurt(6 * dt * 10, "police");
+        }
+      }
+      // Flash the lightbar.
+      var bar = car.mesh.getObjectByName("lightbar");
+      if (bar) {
+        bar.material.emissiveIntensity = (Math.sin(performance.now() * 0.02) > 0) ? 1.4 : 0.15;
+        bar.material.emissive.setHex((Math.sin(performance.now() * 0.02) > 0) ? 0xff2222 : 0x2244ff);
+      }
+    }
+  }
+
+  function updateHelicopter(dt, player) {
+    if (!police.heli) {
+      return;
+    }
+    var active = police.stars >= PC.helicopterStars;
+    police.heli.visible = active;
+    if (!active) {
+      if (window.SH.audio) { window.SH.audio.setSiren(police.cars.length > 0, 40); }
+      return;
+    }
+    var target = player.focusPos();
+    var t = performance.now() * 0.001;
+    police.heli.position.set(
+      target.x + Math.sin(t * 0.6) * 14,
+      30 + Math.sin(t * 1.3) * 2,
+      target.z + Math.cos(t * 0.6) * 14
+    );
+    police.heli.lookAt(target.x, 0, target.z);
+    var rotor = police.heli.getObjectByName("rotor");
+    if (rotor) {
+      rotor.rotation.y += dt * 28;
+    }
+    police.heliLight.intensity = 1.6;
+    police.heliLight.target.position.set(target.x - police.heli.position.x, -30, target.z - police.heli.position.z);
+  }
+
+  function update(dt, rng) {
+    var player = window.SH.player;
+    if (!player || player.dead) {
+      return;
+    }
+    police.stars = starsForHeat(police.heat);
+    updateSpawning(dt, player.pos, rng);
+
+    // Visibility: officers and cars see the player within range.
+    var seen = false;
+    var i;
+    for (i = 0; i < police.officers.length; i++) {
+      if (cfg.dist2d(police.officers[i].pos.x, police.officers[i].pos.z, player.pos.x, player.pos.z) < 34) {
+        seen = true;
+      }
+    }
+    for (i = 0; i < police.cars.length; i++) {
+      if (cfg.dist2d(police.cars[i].pos.x, police.cars[i].pos.z, player.pos.x, player.pos.z) < 48) {
+        seen = true;
+      }
+    }
+    if (police.stars >= PC.helicopterStars) {
+      seen = true;
+    }
+    if (seen) {
+      police.seenTimer = 0;
+      police.lastKnown = { x: player.pos.x, z: player.pos.z };
+    } else {
+      police.seenTimer += dt;
+    }
+
+    // Heat decay, faster while hidden.
+    if (police.heat > 0) {
+      var decay = PC.heatDecayPerSecond;
+      if (!seen) {
+        decay *= PC.hiddenDecayBonus;
+      }
+      police.heat = Math.max(0, police.heat - decay * dt);
+      if (police.heat === 0) {
+        police.stars = 0;
+        if (window.SH.hud) {
+          window.SH.hud.toast("You lost the heat");
+        }
+      }
+    }
+
+    var nearOfficer = updateOfficers(dt, player);
+    updateCopCars(dt, player);
+    updateHelicopter(dt, player);
+
+    // Bust meter.
+    if (nearOfficer && police.stars > 0 && player.speedNow < 2) {
+      police.bust += PC.bustFillRate * dt;
+    } else {
+      police.bust = Math.max(0, police.bust - PC.bustDrainRate * dt);
+    }
+    if (police.bust >= 100) {
+      police.bust = 0;
+      if (window.SH.economy) {
+        window.SH.economy.onBusted();
+      }
+      player.respawn();
+    }
+
+    if (window.SH.audio) {
+      var nearestCop = 999;
+      for (i = 0; i < police.cars.length; i++) {
+        var d = cfg.dist2d(police.cars[i].pos.x, police.cars[i].pos.z, player.pos.x, player.pos.z);
+        if (d < nearestCop) { nearestCop = d; }
+      }
+      window.SH.audio.setSiren(police.stars > 0 && police.cars.length > 0, nearestCop);
+    }
+  }
+
+  function init(scene) {
+    police.scene = scene;
+    buildHelicopter(scene);
+  }
+
+  police.init = init;
+  police.update = update;
+  police.reportCrime = reportCrime;
+  police.clearWanted = clearWanted;
+  police.starsForHeat = starsForHeat;
+  window.SH.police = police;
+})();

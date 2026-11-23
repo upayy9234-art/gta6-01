@@ -1,138 +1,357 @@
-// Solstice Heat - street races and stunt jumps (new in Round 12).
-// Three checkpoint routes, three AI rivals with light rubber-banding,
-// live positions, countdown starts, and eight judged stunt ramps.
-window.SH = window.SH || {};
-(function (SH) {
-  'use strict';
-  var U = SH.U, C = SH.Config;
-  var R = { active: null, ramps: [], countdown: 0, slowmo: 0 };
-  SH.Races = R;
-  R.ROUTES = [
-    { name: 'Boardwalk Sprint', laps: 1, reward: 1, cps: [[328, 8], [248, 88], [168, 168], [88, 248], [8, 328]] },
-    { name: 'Downtown Circuit', laps: 1, reward: 1, cps: [[-8, -8], [-88, -88], [-168, -8], [-88, 72], [72, 72], [72, -88]] },
-    { name: 'Bay Grand Tour', laps: 1, reward: 1.6, cps: [[248, -248], [88, -328], [-168, -248], [-328, -88], [-248, 88], [-88, 248], [88, 328], [248, 168]] }
+// Solstice Heat — races.js
+// Street racing and stunt jumps. Three checkpoint routes (Boardwalk
+// Dash, Neon Circuit, Bay Loop) with two AI rivals each, a countdown
+// start, split timing and cash prizes. Eight stunt ramps around the
+// bay trigger slow-motion when cleared with enough air time.
+(function () {
+  "use strict";
+  window.SH = window.SH || {};
+
+  var cfg = window.SH.config;
+
+  var ROUTES = [
+    {
+      id: "boardwalk-dash",
+      name: "Boardwalk Dash",
+      start: { x: -180, z: 250, heading: -Math.PI / 2 },
+      prize: 220,
+      xp: 35,
+      checkpoints: [
+        { x: -100, z: 250 },
+        { x: -20, z: 250 },
+        { x: 60, z: 250 },
+        { x: 140, z: 250 },
+        { x: 200, z: 220 },
+        { x: 200, z: 150 }
+      ]
+    },
+    {
+      id: "neon-circuit",
+      name: "Neon Circuit",
+      start: { x: -100, z: 70, heading: -Math.PI / 2 },
+      prize: 320,
+      xp: 50,
+      checkpoints: [
+        { x: -20, z: 70 },
+        { x: 60, z: 70 },
+        { x: 100, z: 130 },
+        { x: 60, z: 180 },
+        { x: -40, z: 180 },
+        { x: -100, z: 130 },
+        { x: -100, z: 70 }
+      ]
+    },
+    {
+      id: "bay-loop",
+      name: "Bay Loop",
+      start: { x: -200, z: -160, heading: -Math.PI / 2 },
+      prize: 450,
+      xp: 70,
+      checkpoints: [
+        { x: -80, z: -160 },
+        { x: 60, z: -160 },
+        { x: 180, z: -100 },
+        { x: 180, z: 40 },
+        { x: 80, z: 120 },
+        { x: -60, z: 120 },
+        { x: -180, z: 20 },
+        { x: -200, z: -160 }
+      ]
+    }
   ];
-  R.init = function (scene, rng) {
-    R.scene = scene; R.rng = rng;
-    var geo = new THREE.CylinderGeometry(3, 3, 30, 12, 1, true);
-    var mat = new THREE.MeshBasicMaterial({ color: 0xff2e88, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false });
-    R.marker = new THREE.Mesh(geo, mat); R.marker.visible = false; R.marker.position.y = 15; scene.add(R.marker);
-    // Stunt ramps: wedge meshes at fixed spots.
-    var rampMat = new THREE.MeshLambertMaterial({ color: 0xff7a1a });
-    var rampSpots = [[88, 40, 0], [-40, -120, 1], [180, 200, 2], [-200, 40, 3], [40, -280, 0], [-120, 280, 1], [280, -80, 2], [-300, -200, 3]];
-    rampSpots.forEach(function (s, i) {
-      var ramp = new THREE.Mesh(new THREE.BoxGeometry(6, 1.6, 9), rampMat);
-      ramp.position.set(s[0], 0.8, s[1]); ramp.rotation.x = -0.32; ramp.rotation.y = s[2] * Math.PI / 2;
+
+  var STUNTS = [
+    { id: "stunt-pier", name: "Pier Plunge", x: 40, z: 300, dir: 0 },
+    { id: "stunt-boardwalk", name: "Boardwalk Hop", x: -140, z: 252, dir: 1 },
+    { id: "stunt-neon", name: "Neon Leap", x: 20, z: 128, dir: 0 },
+    { id: "stunt-port", name: "Crane Gap", x: 180, z: -70, dir: 3 },
+    { id: "stunt-heights", name: "Heights Drop", x: -40, z: -110, dir: 2 },
+    { id: "stunt-oldtown", name: "Alley Air", x: -180, z: 30, dir: 1 },
+    { id: "stunt-marina", name: "Marina Skip", x: 170, z: 150, dir: 2 },
+    { id: "stunt-campus", name: "Campus Kicker", x: -190, z: -150, dir: 0 }
+  ];
+
+  var races = {
+    routes: ROUTES,
+    stunts: STUNTS,
+    active: null,
+    checkpointIndex: 0,
+    countdown: 0,
+    elapsed: 0,
+    rivals: [],
+    finished: false,
+    slowmo: 0,
+    rampMeshes: []
+  };
+
+  function buildRamps(scene) {
+    var rampMat = new THREE.MeshLambertMaterial({ color: 0xf2782c });
+    var i;
+    for (i = 0; i < STUNTS.length; i++) {
+      var s = STUNTS[i];
+      var ramp = new THREE.Mesh(new THREE.BoxGeometry(6, 1.6, 8), rampMat);
+      ramp.position.set(s.x, 0.8, s.z);
+      ramp.rotation.y = s.dir * Math.PI / 2;
+      ramp.rotation.x = -0.28;
       scene.add(ramp);
-      R.ramps.push({ x: s[0], z: s[1], heading: s[2] * Math.PI / 2, done: false, idx: i });
-    });
-  };
-  R.start = function (routeIdx) {
-    if (R.active || !SH.Player.car) { if (SH.HUD) SH.HUD.centerMsg('You need a car to race', 1.6); return false; }
-    var route = R.ROUTES[routeIdx];
-    var start = route.cps[0];
-    SH.Player.car.x = start[0]; SH.Player.car.z = start[1] + 14; SH.Player.car.speed = 0;
-    R.rivals = [];
-    for (var i = 0; i < 3; i++) {
-      var mesh = SH.Vehicles.buildCarMesh(C.CAR_MODELS[2], C.CAR_COLORS[(i * 3 + 1) % C.CAR_COLORS.length], false, false);
-      mesh.position.set(start[0] - 6 + i * 6, 0, start[1] + 22);
-      R.scene.add(mesh);
-      R.rivals.push({ mesh: mesh, x: start[0] - 6 + i * 6, z: start[1] + 22, heading: Math.PI, speed: 0, cp: 0, prog: 0, skill: 0.86 + i * 0.06 });
+      races.rampMeshes.push(ramp);
     }
-    R.active = { route: route, cp: 0, time: 0, finished: false };
-    R.countdown = 3.2;
-    R.placeMarker();
-    if (SH.HUD) SH.HUD.centerMsg('Race: ' + route.name + ' - get ready!', 2);
+  }
+
+  function nearStart(playerPos) {
+    var i;
+    for (i = 0; i < ROUTES.length; i++) {
+      var s = ROUTES[i].start;
+      if (cfg.dist2d(playerPos.x, playerPos.z, s.x, s.z) < 9) {
+        return ROUTES[i];
+      }
+    }
+    return null;
+  }
+
+  function spawnRivals(scene, route, rng) {
+    var rivals = [];
+    var i;
+    for (i = 0; i < 2; i++) {
+      var car = window.SH.vehicles.createCar(scene, {
+        x: route.start.x + (i === 0 ? -4 : 4),
+        z: route.start.z + 6,
+        heading: route.start.heading,
+        color: rng.pick(cfg.CAR_COLORS),
+        isTraffic: false
+      });
+      car.ai = {
+        race: true,
+        route: route,
+        checkpointIndex: 0,
+        speed: cfg.VEHICLE.maxSpeed * rng.range(0.62, 0.74),
+        finished: false
+      };
+      rivals.push(car);
+    }
+    return rivals;
+  }
+
+  function start(route, scene, rng, player) {
+    if (races.active) {
+      return false;
+    }
+    if (player.state !== "car") {
+      if (window.SH.hud) {
+        window.SH.hud.toast("Races need a car");
+      }
+      return false;
+    }
+    races.active = route;
+    races.checkpointIndex = 0;
+    races.countdown = 3;
+    races.elapsed = 0;
+    races.finished = false;
+    races.rivals = spawnRivals(scene, route, rng);
+    if (window.SH.hud) {
+      window.SH.hud.setMission(route.name, "Get ready…", "Prize " + cfg.formatMoney(route.prize));
+    }
     return true;
-  };
-  R.placeMarker = function () {
-    if (!R.active) { R.marker.visible = false; return; }
-    var cp = R.active.route.cps[R.active.cp % R.active.route.cps.length];
-    R.marker.visible = true; R.marker.position.x = cp[0]; R.marker.position.z = cp[1];
-  };
-  R.position = function () {
-    if (!R.active) return 1;
-    var p = SH.Player.pos();
-    var myProg = R.active.cp * 1000 - U.dist2d(p.x, p.z, R.active.route.cps[R.active.cp % R.active.route.cps.length][0], R.active.route.cps[R.active.cp % R.active.route.cps.length][1]);
-    var pos = 1;
-    R.rivals.forEach(function (r) { if (r.prog > myProg) pos++; });
-    return pos;
-  };
-  R.objective = function () {
-    if (!R.active) return null;
-    var cp = R.active.route.cps[R.active.cp % R.active.route.cps.length], p = SH.Player.pos();
-    return { label: R.active.route.name + ' - Pos ' + R.position() + '/4 - CP ' + (R.active.cp + 1) + '/' + R.active.route.cps.length, dist: Math.round(U.dist2d(p.x, p.z, cp[0], cp[1])), timer: R.active.time, x: cp[0], z: cp[1], race: true };
-  };
-  R.finish = function () {
-    var pos = R.position();
-    var pay = Math.round(C.RACE_REWARDS[pos - 1] * R.active.route.reward);
-    SH.Economy.addCash(pay, 'Race P' + pos); SH.Economy.addXP(C.RACE_XP[pos - 1]);
-    if (pos === 1) SH.Economy.stats.racesWon++;
-    if (SH.HUD) SH.HUD.centerMsg('Race finished P' + pos + ' - ' + U.fmtMoney(pay), 3.2);
-    R.cleanup();
-  };
-  R.cleanup = function () {
-    if (R.rivals) R.rivals.forEach(function (r) { R.scene.remove(r.mesh); });
-    R.rivals = []; R.active = null; if (R.marker) R.marker.visible = false;
-  };
-  R.cancel = function () { if (R.active) { if (SH.HUD) SH.HUD.centerMsg('Race abandoned', 1.6); R.cleanup(); } };
-  R.update = function (dt) {
-    if (R.slowmo > 0) R.slowmo -= dt;
-    // Stunt detection: driving fast over a ramp launches the car.
-    var car = SH.Player.car;
-    if (car) {
-      for (var i = 0; i < R.ramps.length; i++) {
-        var rp = R.ramps[i];
-        if (U.dist2d(car.x, car.z, rp.x, rp.z) < 4.5 && Math.abs(car.speed) > 15 && !car.airborne) {
-          car.airborne = true; car.airY = 0; car.airV = 7.5; car.airDist = 0;
-          R.slowmo = 0.9;
-          if (SH.HUD) SH.HUD.centerMsg('STUNT JUMP!', 1.2);
-        }
+  }
+
+  function cleanupRivals() {
+    var i;
+    for (i = 0; i < races.rivals.length; i++) {
+      var car = races.rivals[i];
+      var idx = window.SH.vehicles.all.indexOf(car);
+      if (idx >= 0) {
+        window.SH.vehicles.all.splice(idx, 1);
       }
-      if (car.airborne) {
-        car.airV -= 16 * dt; car.airY += car.airV * dt; car.airDist += Math.abs(car.speed) * dt;
-        if (car.airY <= 0) {
-          car.airY = 0; car.airborne = false;
-          var bonus = Math.round(car.airDist * C.STUNT_BASE_REWARD);
-          SH.Economy.addCash(bonus, 'Stunt ' + Math.round(car.airDist) + 'm'); SH.Economy.addXP(10);
-          SH.Economy.stats.stunts++;
-          if (SH.HUD) SH.HUD.centerMsg('Stunt landed: ' + Math.round(car.airDist) + 'm!', 2);
-        }
+      if (car.mesh.parent) {
+        car.mesh.parent.remove(car.mesh);
       }
     }
-    if (!R.active) return;
-    if (R.countdown > 0) {
-      var before = Math.ceil(R.countdown);
-      R.countdown -= dt;
-      if (Math.ceil(R.countdown) !== before && SH.Audio) SH.Audio.countBeep(R.countdown <= 0.2);
-      if (SH.HUD) SH.HUD.centerMsg(R.countdown > 0.4 ? String(Math.ceil(R.countdown - 0.2)) : 'GO!', 0.4);
+    races.rivals = [];
+  }
+
+  function finishRace(playerWon, player) {
+    var route = races.active;
+    if (!route) {
       return;
     }
-    R.active.time += dt;
-    var route = R.active.route;
-    // Rivals follow checkpoints.
-    R.rivals.forEach(function (r) {
-      var cp = route.cps[r.cp % route.cps.length];
-      var want = U.headingTo(r.x, r.z, cp[0], cp[1]);
-      r.heading = U.angleLerp(r.heading, want, U.clamp(dt * 2.4, 0, 1));
-      var playerProg = R.active.cp;
-      var rubber = U.clamp(1 + (playerProg - r.cp) * 0.05, 0.9, 1.12);
-      r.speed = U.damp(r.speed, 24 * r.skill * rubber, 1.5, dt);
-      r.x += Math.sin(r.heading) * r.speed * dt; r.z += Math.cos(r.heading) * r.speed * dt;
-      if (U.dist2d(r.x, r.z, cp[0], cp[1]) < 10) r.cp++;
-      r.prog = r.cp * 1000 - U.dist2d(r.x, r.z, route.cps[r.cp % route.cps.length][0], route.cps[r.cp % route.cps.length][1]);
-      r.mesh.position.set(r.x, 0, r.z); r.mesh.rotation.y = r.heading;
-    });
-    var p = SH.Player.pos(), cp2 = route.cps[R.active.cp % route.cps.length];
-    if (U.dist2d(p.x, p.z, cp2[0], cp2[1]) < 11) {
-      R.active.cp++;
-      if (SH.Audio) SH.Audio.blip();
-      if (R.active.cp >= route.cps.length) { R.finish(); return; }
-      R.placeMarker();
+    if (playerWon) {
+      if (window.SH.economy) {
+        window.SH.economy.addCash(route.prize);
+        window.SH.economy.addXP(route.xp);
+        window.SH.economy.save.racesWon += 1;
+        window.SH.economy.persist();
+      }
+      if (window.SH.hud) {
+        window.SH.hud.toast("You won " + route.name + " · " + cfg.formatMoney(route.prize) +
+          " · " + races.elapsed.toFixed(1) + "s");
+      }
+      if (window.SH.audio) {
+        window.SH.audio.sfx.success();
+      }
+    } else {
+      if (window.SH.hud) {
+        window.SH.hud.toast("Outrun in " + route.name + " — the rivals take the pot");
+      }
+      if (window.SH.audio) {
+        window.SH.audio.sfx.fail();
+      }
     }
-    // Rivals finishing first still lets the player finish for P2-P4.
-    var anyDone = R.rivals.some(function (r) { return r.cp >= route.cps.length; });
-    if (anyDone && U.dist2d(p.x, p.z, cp2[0], cp2[1]) > 200 && R.active.time > 240) R.finish();
-  };
-  R.timeScale = function () { return R.slowmo > 0 ? 0.45 : 1; };
-})(window.SH);
+    if (window.SH.hud) {
+      window.SH.hud.setMission("", "", "");
+    }
+    cleanupRivals();
+    races.active = null;
+    races.finished = true;
+  }
+
+  function stepRival(car, dt) {
+    var ai = car.ai;
+    if (!ai || ai.finished) {
+      return;
+    }
+    var target = ai.route.checkpoints[ai.checkpointIndex];
+    if (!target) {
+      ai.finished = true;
+      return;
+    }
+    var dx = target.x - car.pos.x;
+    var dz = target.z - car.pos.z;
+    var dist = Math.sqrt(dx * dx + dz * dz);
+    if (dist < 11) {
+      ai.checkpointIndex += 1;
+      if (ai.checkpointIndex >= ai.route.checkpoints.length) {
+        ai.finished = true;
+        if (races.active) {
+          finishRace(false, null);
+        }
+        return;
+      }
+      target = ai.route.checkpoints[ai.checkpointIndex];
+      dx = target.x - car.pos.x;
+      dz = target.z - car.pos.z;
+    }
+    var wantHeading = Math.atan2(-dx, -dz);
+    var diff = wantHeading - car.heading;
+    while (diff > Math.PI) { diff -= Math.PI * 2; }
+    while (diff < -Math.PI) { diff += Math.PI * 2; }
+    var input = {
+      throttle: 1,
+      steer: cfg.clamp(-diff * 1.5, -1, 1),
+      handbrake: Math.abs(diff) > 1.9
+    };
+    window.SH.vehicles.stepPlayerCar(car, input, dt);
+    car.speed = cfg.clamp(car.speed, -8, ai.speed);
+  }
+
+  function checkStunts(dt, player) {
+    if (player.state !== "car" || !player.car) {
+      return;
+    }
+    var car = player.car;
+    var i;
+    for (i = 0; i < STUNTS.length; i++) {
+      var s = STUNTS[i];
+      var d = cfg.dist2d(car.pos.x, car.pos.z, s.x, s.z);
+      if (d < 5 && Math.abs(car.speed) > 17) {
+        var save = window.SH.economy ? window.SH.economy.save : null;
+        if (save && !save.stunts[s.id]) {
+          save.stunts[s.id] = true;
+          window.SH.economy.addCash(75);
+          window.SH.economy.addXP(15);
+          window.SH.economy.persist();
+          if (window.SH.hud) {
+            window.SH.hud.toast("Stunt cleared: " + s.name + " · $75");
+          }
+        }
+        races.slowmo = 1.1;
+        car.pos.y = 1.4;
+      }
+    }
+    if (car.pos.y > 0) {
+      car.pos.y = Math.max(0, car.pos.y - dt * 3.2);
+      car.mesh.position.y = car.pos.y;
+    }
+  }
+
+  function update(dt, scene, rng, player) {
+    checkStunts(dt, player);
+    if (races.slowmo > 0) {
+      races.slowmo -= dt;
+    }
+    if (!races.active) {
+      var route = nearStart(player.pos);
+      if (route && player.state === "car" && window.SH.hud) {
+        window.SH.hud.prompt("Press E to race: " + route.name +
+          " — prize " + cfg.formatMoney(route.prize));
+      }
+      return 1;
+    }
+    if (races.countdown > 0) {
+      races.countdown -= dt;
+      if (window.SH.hud) {
+        window.SH.hud.setSub("Starting in " + Math.ceil(races.countdown) + "…");
+      }
+      return 1;
+    }
+    races.elapsed += dt;
+    var i;
+    for (i = 0; i < races.rivals.length; i++) {
+      stepRival(races.rivals[i], dt);
+      if (!races.active) {
+        return 1;
+      }
+    }
+    var cp = races.active.checkpoints[races.checkpointIndex];
+    if (!cp) {
+      finishRace(true, player);
+      return 1;
+    }
+    if (window.SH.missions && window.SH.missions.marker) {
+      var marker = window.SH.missions.marker;
+      marker.position.set(cp.x, 13, cp.z);
+      marker.visible = true;
+    }
+    if (window.SH.hud) {
+      var rivalBest = 0;
+      for (i = 0; i < races.rivals.length; i++) {
+        rivalBest = Math.max(rivalBest, races.rivals[i].ai.checkpointIndex);
+      }
+      window.SH.hud.setMission(
+        races.active.name,
+        "Checkpoint " + (races.checkpointIndex + 1) + " of " + races.active.checkpoints.length,
+        "Time " + races.elapsed.toFixed(1) + "s · best rival at " + (rivalBest + 1)
+      );
+    }
+    var focus = player.focusPos();
+    if (cfg.dist2d(focus.x, focus.z, cp.x, cp.z) < 11) {
+      races.checkpointIndex += 1;
+      if (window.SH.audio) {
+        window.SH.audio.sfx.checkpoint();
+      }
+      if (races.checkpointIndex >= races.active.checkpoints.length) {
+        finishRace(true, player);
+      }
+    }
+    return 1;
+  }
+
+  function timeScale() {
+    return races.slowmo > 0 ? 0.35 : 1;
+  }
+
+  function tryStart(rng, player, scene) {
+    var route = nearStart(player.pos);
+    if (route) {
+      return start(route, scene, rng, player);
+    }
+    return false;
+  }
+
+  races.init = buildRamps;
+  races.update = update;
+  races.start = start;
+  races.tryStart = tryStart;
+  races.nearStart = nearStart;
+  races.timeScale = timeScale;
+  window.SH.races = races;
+})();

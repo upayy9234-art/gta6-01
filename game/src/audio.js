@@ -1,75 +1,339 @@
-// Solstice Heat - procedural WebAudio: engine, sirens, music, ambience.
-// Nothing is sampled; every sound is synthesized so the game ships as
-// static files with zero network requests.
-window.SH = window.SH || {};
-(function (SH) {
-  'use strict';
-  var A = { ctx: null, muted: false, started: false, station: 0, musicTimer: 0, step: 0 };
-  SH.Audio = A;
-  A.init = function () {
-    if (A.started) return;
+// Solstice Heat — audio.js
+// Fully procedural WebAudio sound: two radio stations built from
+// oscillators and chord sequencers, engine hum tied to speed, police
+// sirens, weather noise (rain/wind) and short UI / gameplay effects.
+// No audio assets are loaded; everything is synthesised lazily after
+// the first user gesture unlocks the AudioContext.
+(function () {
+  "use strict";
+  window.SH = window.SH || {};
+
+  var ctx = null;
+  var master = null;
+  var radioGain = null;
+  var engineOsc = null;
+  var engineGain = null;
+  var sirenOsc = null;
+  var sirenGain = null;
+  var noiseGain = null;
+  var started = false;
+
+  var radio = {
+    station: 0,
+    playing: false,
+    step: 0,
+    timer: null,
+    nextNoteTime: 0
+  };
+
+  var STATIONS = [
+    {
+      name: "SOLSTICE FM",
+      genre: "Sunset Pop",
+      bpm: 104,
+      wave: "triangle",
+      scale: [0, 2, 4, 7, 9],
+      root: 220,
+      chords: [
+        [0, 4, 7],
+        [5, 9, 12],
+        [7, 11, 14],
+        [4, 7, 11]
+      ]
+    },
+    {
+      name: "NEON WIRE",
+      genre: "Night Drive Synth",
+      bpm: 122,
+      wave: "sawtooth",
+      scale: [0, 3, 5, 7, 10],
+      root: 196,
+      chords: [
+        [0, 3, 7],
+        [0, 3, 10],
+        [8, 12, 15],
+        [5, 8, 12]
+      ]
+    }
+  ];
+
+  function ensureContext() {
+    if (ctx) {
+      return true;
+    }
     try {
       var AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) return;
-      A.ctx = new AC(); A.started = true;
-      A.master = A.ctx.createGain(); A.master.gain.value = 0.5; A.master.connect(A.ctx.destination);
-      A.engineOsc = A.ctx.createOscillator(); A.engineOsc.type = 'sawtooth'; A.engineOsc.frequency.value = 60;
-      A.engineGain = A.ctx.createGain(); A.engineGain.gain.value = 0;
-      A.engineOsc.connect(A.engineGain); A.engineGain.connect(A.master); A.engineOsc.start();
-      A.sirenOsc = A.ctx.createOscillator(); A.sirenOsc.type = 'triangle'; A.sirenOsc.frequency.value = 700;
-      A.sirenGain = A.ctx.createGain(); A.sirenGain.gain.value = 0;
-      A.sirenOsc.connect(A.sirenGain); A.sirenGain.connect(A.master); A.sirenOsc.start();
-    } catch (e) { /* audio is optional */ }
-  };
-  function beep(freq, dur, type, vol, slideTo) {
-    if (!A.ctx || A.muted) return;
-    var t = A.ctx.currentTime, o = A.ctx.createOscillator(), g = A.ctx.createGain();
-    o.type = type || 'square'; o.frequency.setValueAtTime(freq, t);
-    if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
-    g.gain.setValueAtTime(vol || 0.12, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    o.connect(g); g.connect(A.master); o.start(t); o.stop(t + dur + 0.02);
-  }
-  function noise(dur, vol, freq) {
-    if (!A.ctx || A.muted) return;
-    var t = A.ctx.currentTime, len = Math.floor(A.ctx.sampleRate * dur);
-    var buf = A.ctx.createBuffer(1, len, A.ctx.sampleRate), d = buf.getChannelData(0);
-    for (var i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
-    var src = A.ctx.createBufferSource(); src.buffer = buf;
-    var f = A.ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = freq || 800;
-    var g = A.ctx.createGain(); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    src.connect(f); f.connect(g); g.connect(A.master); src.start(t);
-  }
-  A.blip = function () { beep(880, 0.07, 'square', 0.08); };
-  A.cash = function () { beep(990, 0.09, 'square', 0.1); setTimeout(function () { beep(1320, 0.12, 'square', 0.1); }, 70); };
-  A.shot = function () { noise(0.14, 0.3, 400); beep(160, 0.1, 'sawtooth', 0.15, 60); };
-  A.hit = function () { noise(0.1, 0.2, 300); };
-  A.crash = function (hard) { noise(hard ? 0.4 : 0.2, hard ? 0.4 : 0.2, 220); beep(90, 0.25, 'sawtooth', 0.15, 40); };
-  A.skid = function () { noise(0.18, 0.06, 2400); };
-  A.step = function () { noise(0.05, 0.04, 500); };
-  A.thunder = function () { noise(1.4, 0.5, 120); beep(55, 1.1, 'sine', 0.3, 30); };
-  A.collect = function () { beep(660, 0.08, 'sine', 0.12); setTimeout(function () { beep(990, 0.14, 'sine', 0.12); }, 80); };
-  A.door = function () { beep(220, 0.08, 'square', 0.07, 180); };
-  A.countBeep = function (final) { beep(final ? 880 : 440, final ? 0.3 : 0.12, 'square', 0.14); };
-  // Procedural music sequencer: bass + pad + hats, two stations.
-  var BASS = [55, 55, 65.4, 49, 55, 55, 73.4, 82.4];
-  var PAD = [220, 261.6, 196, 246.9];
-  A.update = function (dt, speed, inCar, sirenNear) {
-    if (!A.ctx) return;
-    var t = A.ctx.currentTime;
-    if (A.engineGain) A.engineGain.gain.value = A.muted ? 0 : (inCar ? 0.05 + Math.min(0.1, Math.abs(speed) * 0.003) : 0);
-    if (A.engineOsc && inCar) A.engineOsc.frequency.value = 55 + Math.abs(speed) * 3.2;
-    if (A.sirenGain) A.sirenGain.gain.value = A.muted ? 0 : (sirenNear ? 0.035 : 0);
-    if (A.sirenOsc) A.sirenOsc.frequency.value = 650 + Math.sin(t * 4.2) * 220;
-    A.musicTimer -= dt;
-    if (A.musicTimer <= 0 && !A.muted) {
-      A.musicTimer = 0.24; A.step++;
-      var bar = Math.floor(A.step / 8) % 4;
-      if (A.step % 2 === 0) beep(BASS[bar * 2 % BASS.length], 0.22, 'triangle', 0.09);
-      if (A.step % 8 === 0) beep(PAD[bar], 0.9, 'sine', 0.05);
-      if (A.step % 2 === 1) noise(0.03, 0.02, 6000);
-      if (A.station === 1 && A.step % 16 === 0) beep(520, 0.1, 'sine', 0.05, 390);
+      if (!AC) {
+        return false;
+      }
+      ctx = new AC();
+      master = ctx.createGain();
+      master.gain.value = 0.6;
+      master.connect(ctx.destination);
+      radioGain = ctx.createGain();
+      radioGain.gain.value = 0.0;
+      radioGain.connect(master);
+      return true;
+    } catch (err) {
+      return false;
     }
+  }
+
+  function noteFreq(root, semitone) {
+    return root * Math.pow(2, semitone / 12);
+  }
+
+  function playTone(freq, time, dur, wave, vol, dest) {
+    var osc = ctx.createOscillator();
+    var gain = ctx.createGain();
+    osc.type = wave;
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0, time);
+    gain.gain.linearRampToValueAtTime(vol, time + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
+    osc.connect(gain);
+    gain.connect(dest || radioGain);
+    osc.start(time);
+    osc.stop(time + dur + 0.05);
+  }
+
+  function playBass(freq, time, dur, vol) {
+    var osc = ctx.createOscillator();
+    var gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = freq / 2;
+    gain.gain.setValueAtTime(vol, time);
+    gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
+    osc.connect(gain);
+    gain.connect(radioGain);
+    osc.start(time);
+    osc.stop(time + dur + 0.05);
+  }
+
+  function scheduleStep() {
+    if (!radio.playing || !ctx) {
+      return;
+    }
+    var st = STATIONS[radio.station];
+    var spb = 60 / st.bpm / 2;
+    while (radio.nextNoteTime < ctx.currentTime + 0.18) {
+      var step = radio.step;
+      var bar = Math.floor(step / 8) % st.chords.length;
+      var chord = st.chords[bar];
+      var t = radio.nextNoteTime;
+      if (step % 8 === 0) {
+        var i;
+        for (i = 0; i < chord.length; i++) {
+          playTone(noteFreq(st.root, chord[i]), t, spb * 7, st.wave, 0.05);
+        }
+        playBass(noteFreq(st.root, chord[0]), t, spb * 7, 0.16);
+      }
+      if (step % 2 === 0) {
+        var degree = st.scale[step % st.scale.length];
+        var oct = step % 16 >= 8 ? 12 : 0;
+        playTone(noteFreq(st.root, degree + 12 + oct), t, spb * 0.9, st.wave, 0.07);
+      }
+      if (step % 4 === 2) {
+        playNoiseBurst(t, 0.03, 0.05, 6000);
+      }
+      radio.step += 1;
+      radio.nextNoteTime += spb;
+    }
+  }
+
+  function playNoiseBurst(time, dur, vol, cutoff) {
+    if (!ctx) {
+      return;
+    }
+    var len = Math.max(1, Math.floor(ctx.sampleRate * dur));
+    var buffer = ctx.createBuffer(1, len, ctx.sampleRate);
+    var data = buffer.getChannelData(0);
+    var i;
+    for (i = 0; i < len; i++) {
+      data[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    }
+    var src = ctx.createBufferSource();
+    src.buffer = buffer;
+    var filter = ctx.createBiquadFilter();
+    filter.type = "highpass";
+    filter.frequency.value = cutoff || 4000;
+    var gain = ctx.createGain();
+    gain.gain.value = vol;
+    src.connect(filter);
+    filter.connect(gain);
+    gain.connect(radioGain);
+    src.start(time);
+  }
+
+  function startEngine() {
+    engineOsc = ctx.createOscillator();
+    engineOsc.type = "sawtooth";
+    engineOsc.frequency.value = 55;
+    var filter = ctx.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.value = 320;
+    engineGain = ctx.createGain();
+    engineGain.gain.value = 0;
+    engineOsc.connect(filter);
+    filter.connect(engineGain);
+    engineGain.connect(master);
+    engineOsc.start();
+  }
+
+  function startSiren() {
+    sirenOsc = ctx.createOscillator();
+    sirenOsc.type = "triangle";
+    sirenOsc.frequency.value = 700;
+    sirenGain = ctx.createGain();
+    sirenGain.gain.value = 0;
+    sirenOsc.connect(sirenGain);
+    sirenGain.connect(master);
+    sirenOsc.start();
+  }
+
+  function startWeatherNoise() {
+    var len = ctx.sampleRate * 2;
+    var buffer = ctx.createBuffer(1, len, ctx.sampleRate);
+    var data = buffer.getChannelData(0);
+    var i;
+    var last = 0;
+    for (i = 0; i < len; i++) {
+      var white = Math.random() * 2 - 1;
+      last = (last + 0.02 * white) / 1.02;
+      data[i] = last * 3.2;
+    }
+    var src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.loop = true;
+    var filter = ctx.createBiquadFilter();
+    filter.type = "bandpass";
+    filter.frequency.value = 900;
+    noiseGain = ctx.createGain();
+    noiseGain.gain.value = 0;
+    src.connect(filter);
+    filter.connect(noiseGain);
+    noiseGain.connect(master);
+    src.start();
+  }
+
+  function unlock() {
+    if (!ensureContext()) {
+      return;
+    }
+    if (ctx.state === "suspended") {
+      ctx.resume();
+    }
+    if (!started) {
+      started = true;
+      startEngine();
+      startSiren();
+      startWeatherNoise();
+      radio.timer = window.setInterval(scheduleStep, 40);
+    }
+  }
+
+  function setRadio(on, stationIndex) {
+    unlock();
+    if (!ctx) {
+      return;
+    }
+    if (typeof stationIndex === "number") {
+      radio.station = stationIndex % STATIONS.length;
+      radio.step = 0;
+    }
+    radio.playing = !!on;
+    radioGain.gain.setTargetAtTime(on ? 0.5 : 0.0, ctx.currentTime, 0.2);
+    if (on) {
+      radio.nextNoteTime = ctx.currentTime + 0.06;
+    }
+  }
+
+  function cycleRadio() {
+    if (!radio.playing) {
+      setRadio(true, 0);
+      return STATIONS[0];
+    }
+    if (radio.station === 0) {
+      setRadio(true, 1);
+      return STATIONS[1];
+    }
+    setRadio(false);
+    return null;
+  }
+
+  function setEngine(speedRatio, inCar) {
+    if (!ctx || !engineOsc) {
+      return;
+    }
+    var target = inCar ? 0.05 + Math.abs(speedRatio) * 0.08 : 0;
+    engineOsc.frequency.setTargetAtTime(
+      55 + Math.abs(speedRatio) * 130, ctx.currentTime, 0.08);
+    engineGain.gain.setTargetAtTime(target, ctx.currentTime, 0.1);
+  }
+
+  function setSiren(active, distance) {
+    if (!ctx || !sirenOsc) {
+      return;
+    }
+    if (!active) {
+      sirenGain.gain.setTargetAtTime(0, ctx.currentTime, 0.1);
+      return;
+    }
+    var t = ctx.currentTime;
+    var wail = 700 + Math.sin(t * 2.4) * 180;
+    sirenOsc.frequency.setTargetAtTime(wail, t, 0.05);
+    var vol = Math.max(0, 0.12 - (distance || 0) * 0.0012);
+    sirenGain.gain.setTargetAtTime(vol, t, 0.1);
+  }
+
+  function setWeatherNoise(kind) {
+    if (!ctx || !noiseGain) {
+      return;
+    }
+    var vol = 0;
+    if (kind === "rain") { vol = 0.05; }
+    if (kind === "storm") { vol = 0.1; }
+    if (kind === "haze") { vol = 0.012; }
+    noiseGain.gain.setTargetAtTime(vol, ctx.currentTime, 0.4);
+  }
+
+  function blip(freq, dur, vol, wave) {
+    if (!ensureContext() || !started) {
+      return;
+    }
+    playTone(freq, ctx.currentTime, dur || 0.12, wave || "square", vol || 0.08, master);
+  }
+
+  var sfx = {
+    pickup: function () { blip(880, 0.12, 0.09); blip(1320, 0.16, 0.07); },
+    cash: function () { blip(1046, 0.1, 0.09); blip(1568, 0.18, 0.08); },
+    fail: function () { blip(196, 0.3, 0.1, "sawtooth"); },
+    success: function () {
+      blip(523, 0.12, 0.09);
+      blip(659, 0.12, 0.09);
+      blip(784, 0.22, 0.1);
+    },
+    shot: function () { playNoiseBurst(ctx ? ctx.currentTime : 0, 0.09, 0.22, 900); },
+    punch: function () { playNoiseBurst(ctx ? ctx.currentTime : 0, 0.06, 0.16, 500); },
+    crash: function () { playNoiseBurst(ctx ? ctx.currentTime : 0, 0.25, 0.2, 300); },
+    door: function () { blip(240, 0.08, 0.07, "triangle"); },
+    checkpoint: function () { blip(1174, 0.14, 0.09); },
+    shutter: function () {
+      playNoiseBurst(ctx ? ctx.currentTime : 0, 0.03, 0.18, 2500);
+      blip(1800, 0.05, 0.05);
+    },
+    sirenOn: function () { blip(700, 0.2, 0.06, "triangle"); }
   };
-  A.toggleMute = function () { A.muted = !A.muted; if (A.master) A.master.gain.value = A.muted ? 0 : 0.5; return A.muted; };
-  A.cycleStation = function () { A.station = (A.station + 1) % SH.Config.RADIO_STATIONS.length; return SH.Config.RADIO_STATIONS[A.station]; };
-})(window.SH);
+
+  window.SH.audio = {
+    unlock: unlock,
+    setRadio: setRadio,
+    cycleRadio: cycleRadio,
+    setEngine: setEngine,
+    setSiren: setSiren,
+    setWeatherNoise: setWeatherNoise,
+    stations: STATIONS,
+    radioState: radio,
+    sfx: sfx
+  };
+})();

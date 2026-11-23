@@ -20,7 +20,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
 
-const ENTRY_TITLE = 'Solstice Heat — Round 12: living city, weather, races, heists and photo mode';
+const ENTRY_TITLE = 'Solstice Heat — Round 13: living city, weather, races, stunt jumps and photo mode';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';

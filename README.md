@@ -1,117 +1,97 @@
+# Solstice Heat
+
 [![make.fun · gta6-01](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![rank](https://make.fun/badge/gta6-01/upayy9234-art/gta6-01/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![reward](https://make.fun/badge/gta6-01/upayy9234-art/gta6-01/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
-# Solstice Heat
+**Solstice Heat** is a browser-based open-world action game set in Solstice Bay, a
+sun-drenched procedural coastal city of art-deco towers, palm-lined boardwalks,
+neon avenues and a working marina. You play a wheelman-for-hire who takes on a
+ten-mission story campaign for fixer Marisol Vega while juggling side jobs,
+street races, stunt jumps, collectibles and a five-star wanted system.
 
-[![make.fun · gta6-01](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01)
-[![make.fun rank · gta6-01](https://make.fun/badge/gta6-01-rank.svg)](https://make.fun/bounty/gta6-01)
-[![make.fun reward · gta6-01](https://make.fun/badge/gta6-01-reward.svg)](https://make.fun/bounty/gta6-01)
+Everything runs from static files. The 3D world is rendered with the vendored
+Three.js build in `game/vendor/`; there are no external dependencies, no build
+step for the game itself, and no network calls. Weather, time of day, traffic,
+pedestrians, police pressure and the economy are all simulated locally, and
+your progress is saved to `localStorage`.
 
-**Solstice Heat — Round 12: living city, weather, races, heists.**
+## Running the game
 
-A pastel art-deco beach-city sandbox that runs entirely as static files in
-the browser. No build step, no network requests: procedural city,
-procedural radio, synthesized engine and siren sounds, and a full
-simulation of traffic, pedestrians, police and weather.
+Option one — just open the page:
 
-## The city
+- Open `game/index.html` in any modern desktop browser.
 
-Solstice Bay is generated from a fixed seed: a road grid with named
-streets, seven districts (Boardwalk, Downtown, Neon Mile, Marina,
-Portside, Old Town, The Hills), lit art-deco towers, palm trees, a sandy
-beach, animated ocean, the Marina Pier, glowing billboards, street lamps
-and beach props.
+Option two — serve it locally (recommended, avoids file-origin quirks):
 
-## What is new in Round 12
+- Run `node serve.ts` from the repository root.
+- Visit the printed local address in your browser.
 
-- **Dynamic weather and a full day/night cycle** — the sun and moon cross
-  the sky, dawn and golden hour tint the whole city, and clear, breeze,
-  overcast, rain, storm and fog states roll in with rain particles,
-  lightning, thunder and wet, slippery roads.
-- **Street races** — three checkpoint routes (Boardwalk Sprint, Downtown
-  Circuit, Bay Grand Tour) against three AI rivals with light
-  rubber-banding, live positions and position prizes.
-- **Activities everywhere** — 30 hidden glowing shells, 8 stunt ramps with
-  slow-motion judged jumps, 6 postcard photo spots and a roaming
-  time-trial beacon.
-- **Procedural radio** — two stations: a synthesized synth sequencer and a
-  news station with a scrolling local ticker.
+Deterministic screenshot compositions are available through the query string,
+for example `game/index.html?shot=cover&seed=7`. The recognised shot names are
+`cover`, `drive`, `chase`, `foot`, `marina` and `sunset`.
 
-## Core game
+## Building the dossier
 
-- Play a fixer in a Hawaiian shirt: walk, run, swim, melee, pistol.
-- Steal and drive any car: arcade physics, drift, damage and smoke.
-- SBPD wanted system, 0–5 stars: patrols, pursuit AI, roadblocks at three
-  stars, and a helicopter with a spotlight at four stars and up. A bust
-  meter fills when a unit is close and you are slow; break line of sight
-  to cool the heat down.
-- **Ten-mission story chain** for Marisol Vega with dialogue, go-to,
-  tailing, delivery, escort and survive objectives, ending with the crown
-  case delivered to Marina Pier at golden hour.
-- **Side jobs** from the city job board: taxi fares, courier runs,
-  checkpoint rush, VIP rides, tow jobs and paramedic runs.
-- **Economy**: cash and bank, a five-rank reputation ladder (Street Rat to
-  Solstice Legend) with XP, session statistics, a shop (tires, armor,
-  medkits, shirts, resprays, ammo) and food that heals.
-- **Living HUD**: cash/bank/rank/XP, wanted stars, health, speedometer,
-  objective with distance and timer, police chatter, reward popups,
-  tutorial prompts and a live minimap showing roads, traffic, police,
-  objectives, shells and the beacon.
-- Progress (money, rank, shells, postcards, missions, position) saves to
-  localStorage automatically.
-- Start, pause, busted and wasted screens; guided three-step onboarding.
+- Run `MAKEFUN_OUTPUT_DIR=out node main.ts` to build the submission dossier.
+- The dossier bundles the game, this README, the shot definitions in
+  `shots.json` and the screenshots in `screenshots/`.
 
-## Run it
+## Features
 
-```sh
-node serve.ts
-```
-
-Then open http://localhost:8080 in desktop Chrome.
+- Procedural city of Solstice Bay with seven districts: Boardwalk, Neon Mile,
+  Marina, Old Town, Palm Heights, the Port and the University.
+- Art-deco buildings with lit windows, palm trees, street lamps, canvas
+  billboards, a beach, the sea and the Marina Pier.
+- Dynamic weather (clear, haze, rain, storm, fog) and a full day/night cycle
+  with moving sun, moon, sky colours and window lights.
+- On-foot play: walk, sprint, swim, melee attacks and a pistol, with health
+  and armour.
+- Drivable cars with acceleration, braking, steering, drift, collision damage
+  and deformation smoke, plus AI traffic that follows the road grid.
+- Wandering pedestrians who stroll the pavements and flee from danger.
+- Police system: wanted level from zero to five stars, pursuit AI, roadblocks
+  from three stars, a helicopter spotlight from four stars, a bust meter and
+  heat that decays while you stay out of sight.
+- Ten-mission story campaign for Marisol Vega with goto, chase, tail, escort
+  and survive objectives, preceded by a three-step guided onboarding.
+- Six side jobs: taxi, courier, checkpoint run, VIP escort, tow truck and
+  paramedic.
+- Economy: cash and bank balances, five XP ranks, shops for armour, health,
+  ammo and car repairs, all persisted in a local save.
+- Three street-race routes with checkpoints and rival cars, plus eight stunt
+  jumps with slow-motion cameras.
+- Collectibles: thirty seashells and six postcards hidden around the bay, and
+  a beacon time-trial mode.
+- Procedural WebAudio radio with two stations, engine, siren, weather and UI
+  sound effects — no audio files needed.
+- Photo mode on the P key with free framing, letterbox bars and a shutter.
+- HUD with health, armour, cash, wanted stars, mission text, a live minimap
+  drawn on a canvas, and toast notifications.
 
 ## Controls
 
-| Key | Action |
-| --- | --- |
-| WASD / arrows | Walk or drive |
-| Shift | Run |
-| E | Enter/exit car, talk, interact |
-| F | Melee |
-| Mouse click | Fire pistol |
-| Space | Brake / handbrake drift |
-| 1–4 | Take a job at the job board / start a race at the race office |
-| B | Start a race when in a car near the race office |
-| X | Cancel the current job |
-| R | Switch radio station |
-| M | Mute |
-| Esc | Pause |
+- W / A / S / D or arrow keys — move on foot, drive in a car.
+- Shift — sprint on foot.
+- Space — handbrake / drift in a car.
+- E — enter or exit the nearest car, accept a job or mission prompt.
+- F or left mouse button — melee attack or fire the pistol.
+- R — reload / reset car upright.
+- M — toggle radio station.
+- P — photo mode.
+- Esc — pause.
 
-## Screenshots
+## Project layout
 
-Deterministic screenshot modes are built in, for example
-`http://localhost:8080/?shot=cover&seed=7`. See `shots.json` for the
-captured set: cover, drive, chase and foot compositions.
+- `game/index.html` — page shell, HUD DOM and script load order.
+- `game/src/` — the game systems, one classic script per system, all attached
+  to the shared `window.SH` namespace.
+- `game/vendor/three.min.js` — vendored Three.js renderer.
+- `shots.json` — the four dossier screenshot definitions.
+- `screenshots/` — the captured dossier screenshots.
+- `main.ts` — dossier builder entry point.
+- `serve.ts` — tiny local static server for development.
 
-## Structure
+## License
 
-- `game/index.html` — page, HUD DOM and styles
-- `game/src/config.js` — all tuning: districts, palettes, cars, prices, ranks
-- `game/src/rng.js` — seeded mulberry32 RNG and math helpers
-- `game/src/audio.js` — procedural WebAudio: engine, sirens, music, ambience
-- `game/src/city.js` — procedural city generation and collision
-- `game/src/weather.js` — day/night cycle and dynamic weather
-- `game/src/vehicles.js` — car models, traffic AI, driving physics
-- `game/src/people.js` — pedestrians
-- `game/src/player.js` — the player character
-- `game/src/police.js` — wanted system, pursuits, roadblocks, helicopter
-- `game/src/missions.js` — the ten-mission Marisol Vega story chain
-- `game/src/economy.js` — cash, bank, XP, shop and saving
-- `game/src/jobs.js` — side jobs
-- `game/src/races.js` — street races and stunt jumps
-- `game/src/activities.js` — shells, postcards and the beacon trial
-- `game/src/hud.js` — HUD and minimap
-- `game/src/shots.js` — deterministic screenshot compositions
-- `game/src/main.js` — bootstrap, cameras, input and the game loop
-- `main.ts` — make.fun submission dossier plumbing
-- `serve.ts` — local static server on port 8080
+See `LICENSE` in the repository root.

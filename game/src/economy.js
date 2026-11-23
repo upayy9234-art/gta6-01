@@ -1,65 +1,278 @@
-// Solstice Heat - economy: cash, bank, XP ranks, stats, shop, save/load.
-window.SH = window.SH || {};
-(function (SH) {
-  'use strict';
-  var U = SH.U, C = SH.Config;
-  var E = {
-    cash: 120, bank: 0, xp: 0, upgrades: {}, stats: { earned: 0, spent: 0, jobsDone: 0, racesWon: 0, missionsDone: 0, shells: 0, stunts: 0, postcards: 0, busts: 0, wasted: 0 },
-    shellsFound: [], postcardsFound: [], missionsDoneList: []
+// Solstice Heat — economy.js
+// Money, XP ranks, shops and the persistent save. Cash is carried
+// on the player and can be lost to fines and hospital bills; banked
+// money is safe. XP climbs through five ranks from Runner to
+// Kingpin. The save lives in localStorage and records cash, bank,
+// XP, completed missions, finished jobs, collectibles and settings.
+(function () {
+  "use strict";
+  window.SH = window.SH || {};
+
+  var cfg = window.SH.config;
+  var EC = cfg.ECONOMY;
+
+  function defaultSave() {
+    return {
+      cash: EC.startCash,
+      bank: EC.startBank,
+      xp: 0,
+      missionsDone: {},
+      jobsDone: 0,
+      racesWon: 0,
+      shells: {},
+      postcards: {},
+      stunts: {},
+      onboardingDone: false,
+      radioStation: 0,
+      playSeconds: 0
+    };
+  }
+
+  var economy = {
+    save: defaultSave(),
+    loaded: false
   };
-  SH.Economy = E;
-  E.rankIdx = function () { var r = 0; for (var i = 0; i < C.RANKS.length; i++) if (E.xp >= C.RANKS[i].xp) r = i; return r; };
-  E.rank = function () { return C.RANKS[E.rankIdx()]; };
-  E.nextRank = function () { return C.RANKS[E.rankIdx() + 1] || null; };
-  E.addCash = function (amt, why) {
-    E.cash += amt; E.stats.earned += Math.max(0, amt);
-    // A slice of every payout is banked automatically.
-    if (amt > 100) { var dep = Math.floor(amt * 0.25); E.cash -= dep; E.bank += dep; }
-    if (SH.HUD && amt !== 0) SH.HUD.rewardPopup((amt > 0 ? '+' : '') + U.fmtMoney(amt) + (why ? ' - ' + why : ''));
-    if (SH.Audio && amt > 0) SH.Audio.cash();
-  };
-  E.spend = function (amt) {
-    if (E.cash < amt) { if (SH.HUD) SH.HUD.centerMsg('Not enough cash', 1.4); return false; }
-    E.cash -= amt; E.stats.spent += amt; return true;
-  };
-  E.addXP = function (amt) {
-    var before = E.rankIdx(); E.xp += amt;
-    if (E.rankIdx() > before && SH.HUD) { SH.HUD.centerMsg('Rank up: ' + E.rank().name + '!', 2.6); if (SH.Audio) SH.Audio.collect(); }
-  };
-  E.hasUpgrade = function (id) { return !!E.upgrades[id]; };
-  E.buy = function (item) {
-    if (item.id !== 'medkit' && item.id !== 'ammo' && E.upgrades[item.id]) { if (SH.HUD) SH.HUD.centerMsg('Already owned', 1.3); return false; }
-    if (!E.spend(item.price)) return false;
-    if (item.id === 'medkit') SH.Player.heal(50);
-    else if (item.id === 'ammo') SH.Player.ammo += 12;
-    else if (item.id === 'shirt') SH.Player.setShirt(SH.Player.shirtIdx + 1);
-    else if (item.id === 'paint' && SH.Player.car) { SH.Player.car.mesh.children[0].material = new THREE.MeshLambertMaterial({ color: SH.U ? 0xff2e88 : 0xff2e88 }); }
-    else E.upgrades[item.id] = true;
-    if (SH.HUD) SH.HUD.centerMsg('Bought: ' + item.name, 1.6);
+
+  function load() {
+    try {
+      var raw = window.localStorage.getItem(cfg.SAVE_KEY);
+      if (raw) {
+        var parsed = JSON.parse(raw);
+        var fresh = defaultSave();
+        var k;
+        for (k in fresh) {
+          if (parsed[k] !== undefined) {
+            fresh[k] = parsed[k];
+          }
+        }
+        economy.save = fresh;
+      }
+    } catch (err) {
+      economy.save = defaultSave();
+    }
+    economy.loaded = true;
+    return economy.save;
+  }
+
+  function persist() {
+    try {
+      window.localStorage.setItem(cfg.SAVE_KEY, JSON.stringify(economy.save));
+    } catch (err) {
+      // Storage may be unavailable (private mode); the game continues.
+    }
+  }
+
+  function rankFor(xp) {
+    var ranks = EC.ranks;
+    var current = ranks[0];
+    var index = 0;
+    var i;
+    for (i = 0; i < ranks.length; i++) {
+      if (xp >= ranks[i].xp) {
+        current = ranks[i];
+        index = i;
+      }
+    }
+    var next = ranks[index + 1] || null;
+    return { rank: current, index: index, next: next };
+  }
+
+  function addXP(amount) {
+    var before = rankFor(economy.save.xp).index;
+    economy.save.xp += amount;
+    var after = rankFor(economy.save.xp);
+    if (after.index > before && window.SH.hud) {
+      window.SH.hud.toast("Rank up: " + after.rank.name);
+      if (window.SH.audio) {
+        window.SH.audio.sfx.success();
+      }
+    }
+    persist();
+    return after;
+  }
+
+  function addCash(amount) {
+    economy.save.cash = Math.max(0, economy.save.cash + amount);
+    if (amount > 0 && window.SH.audio) {
+      window.SH.audio.sfx.cash();
+    }
+    persist();
+    return economy.save.cash;
+  }
+
+  function spendCash(amount) {
+    if (economy.save.cash < amount) {
+      return false;
+    }
+    economy.save.cash -= amount;
+    persist();
     return true;
-  };
-  E.save = function () {
-    try {
-      var p = SH.Player.pos();
-      localStorage.setItem(C.SAVE_KEY, JSON.stringify({
-        cash: E.cash, bank: E.bank, xp: E.xp, upgrades: E.upgrades, stats: E.stats,
-        shellsFound: E.shellsFound, postcardsFound: E.postcardsFound, missionsDoneList: E.missionsDoneList,
-        x: p.x, z: p.z, ammo: SH.Player.ammo, shirt: SH.Player.shirtIdx
-      }));
-    } catch (e) { /* private mode */ }
-  };
-  E.load = function () {
-    try {
-      var raw = localStorage.getItem(C.SAVE_KEY); if (!raw) return false;
-      var d = JSON.parse(raw);
-      E.cash = d.cash; E.bank = d.bank; E.xp = d.xp; E.upgrades = d.upgrades || {};
-      E.stats = d.stats || E.stats; E.shellsFound = d.shellsFound || []; E.postcardsFound = d.postcardsFound || [];
-      E.missionsDoneList = d.missionsDoneList || [];
-      if (typeof d.x === 'number') { SH.Player.x = d.x; SH.Player.z = d.z; }
-      if (typeof d.ammo === 'number') SH.Player.ammo = d.ammo;
-      if (typeof d.shirt === 'number') SH.Player.setShirt(d.shirt);
+  }
+
+  function depositAll() {
+    economy.save.bank += economy.save.cash;
+    economy.save.cash = 0;
+    persist();
+    if (window.SH.hud) {
+      window.SH.hud.toast("Deposited. Bank: " + cfg.formatMoney(economy.save.bank));
+    }
+  }
+
+  function buy(itemId, player) {
+    var item = null;
+    var i;
+    for (i = 0; i < EC.shop.length; i++) {
+      if (EC.shop[i].id === itemId) {
+        item = EC.shop[i];
+      }
+    }
+    if (!item) {
+      return false;
+    }
+    if (item.kind === "deposit") {
+      depositAll();
       return true;
-    } catch (e) { return false; }
-  };
-  E.resetSave = function () { try { localStorage.removeItem(C.SAVE_KEY); } catch (e) {} };
-})(window.SH);
+    }
+    if (!spendCash(item.price)) {
+      if (window.SH.hud) {
+        window.SH.hud.toast("Not enough cash for " + item.name);
+      }
+      if (window.SH.audio) {
+        window.SH.audio.sfx.fail();
+      }
+      return false;
+    }
+    if (item.kind === "health") {
+      player.heal(item.amount);
+    } else if (item.kind === "armor") {
+      player.addArmor(item.amount);
+    } else if (item.kind === "ammo") {
+      player.ammo += item.amount;
+    } else if (item.kind === "repair") {
+      if (player.car) {
+        window.SH.vehicles.repair(player.car);
+      } else if (window.SH.vehicles.playerCar) {
+        window.SH.vehicles.repair(window.SH.vehicles.playerCar);
+      }
+    } else if (item.kind === "heat") {
+      if (window.SH.police) {
+        window.SH.police.heat = Math.max(0, window.SH.police.heat - item.amount);
+      }
+    }
+    if (window.SH.hud) {
+      window.SH.hud.toast("Bought: " + item.name);
+    }
+    if (window.SH.audio) {
+      window.SH.audio.sfx.pickup();
+    }
+    persist();
+    return true;
+  }
+
+  // Shop zones in the world: walking into one and pressing the shop
+  // key cycles purchases; main.js routes the keypress here.
+  var SHOP_ZONES = [
+    { name: "Pier Kiosk", x: 28, z: 292, radius: 7 },
+    { name: "Neon Armory", x: -14, z: 96, radius: 7 },
+    { name: "Marina Garage", x: 150, z: 96, radius: 8 },
+    { name: "Old Town Bodega", x: -150, z: 36, radius: 7 }
+  ];
+
+  function shopNear(pos) {
+    var i;
+    for (i = 0; i < SHOP_ZONES.length; i++) {
+      var z = SHOP_ZONES[i];
+      if (cfg.dist2d(pos.x, pos.z, z.x, z.z) < z.radius) {
+        return z;
+      }
+    }
+    return null;
+  }
+
+  var shopCursor = 0;
+  function cycleShop(player) {
+    var zone = shopNear(player.pos);
+    if (!zone) {
+      return false;
+    }
+    var item = EC.shop[shopCursor % EC.shop.length];
+    shopCursor += 1;
+    if (window.SH.hud) {
+      window.SH.hud.prompt(zone.name + " — press B to buy " + item.name +
+        " (" + cfg.formatMoney(item.price) + ")");
+    }
+    economy.pendingItem = item.id;
+    return true;
+  }
+
+  function confirmShop(player) {
+    if (economy.pendingItem) {
+      var ok = buy(economy.pendingItem, player);
+      economy.pendingItem = null;
+      return ok;
+    }
+    return false;
+  }
+
+  function completeMission(mission) {
+    economy.save.missionsDone[mission.id] = true;
+    addCash(mission.reward);
+    addXP(mission.xp);
+    if (window.SH.missions && Object.keys(economy.save.missionsDone).length >= 1) {
+      economy.save.onboardingDone = true;
+    }
+    persist();
+  }
+
+  function completeJob(job, reward, xp) {
+    economy.save.jobsDone += 1;
+    addCash(reward);
+    addXP(xp);
+    persist();
+  }
+
+  function onWasted(cause) {
+    var bill = Math.min(economy.save.cash, EC.hospitalCost);
+    economy.save.cash -= bill;
+    if (window.SH.hud) {
+      window.SH.hud.toast("Wasted — hospital bill " + cfg.formatMoney(bill));
+    }
+    persist();
+  }
+
+  function onBusted() {
+    var fine = Math.floor(economy.save.cash * EC.bustFinePercent);
+    economy.save.cash -= fine;
+    if (window.SH.hud) {
+      window.SH.hud.toast("Busted — fine " + cfg.formatMoney(fine));
+    }
+    if (window.SH.police) {
+      window.SH.police.clearWanted("busted");
+    }
+    persist();
+  }
+
+  function tick(dt) {
+    economy.save.playSeconds += dt;
+  }
+
+  economy.load = load;
+  economy.persist = persist;
+  economy.rankFor = rankFor;
+  economy.addXP = addXP;
+  economy.addCash = addCash;
+  economy.spendCash = spendCash;
+  economy.depositAll = depositAll;
+  economy.buy = buy;
+  economy.shopNear = shopNear;
+  economy.cycleShop = cycleShop;
+  economy.confirmShop = confirmShop;
+  economy.completeMission = completeMission;
+  economy.completeJob = completeJob;
+  economy.onWasted = onWasted;
+  economy.onBusted = onBusted;
+  economy.tick = tick;
+  economy.shopZones = SHOP_ZONES;
+  economy.pendingItem = null;
+  window.SH.economy = economy;
+})();

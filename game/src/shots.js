@@ -1,86 +1,197 @@
-// Solstice Heat - deterministic screenshot compositions.
-// ?shot=<name>&seed=<n> pins weather, hour, wanted level, vehicles and
-// camera so the kit captures the exact frames listed in shots.json.
-// Input is locked; after the scene settles, window.__shotReady = true.
-window.SH = window.SH || {};
-(function (SH) {
-  'use strict';
-  var S = { name: null, frames: 0 };
-  SH.Shots = S;
-  S.parse = function () {
-    var q = {};
-    (window.location.search || '').replace(/^\?/, '').split('&').forEach(function (kv) {
-      var parts = kv.split('='); if (parts[0]) q[parts[0]] = decodeURIComponent(parts[1] || '');
-    });
-    S.name = q.shot || null; S.seed = parseInt(q.seed || '7', 10) || 7;
-    return S.name;
-  };
-  S.isShot = function () { return !!S.name; };
-  S.setup = function (game) {
-    if (!S.name) return;
-    var P = SH.Player, W = SH.Weather;
-    W.pinned = true;
-    var scene = game.scene;
-    function placeCar(modelIdx, color, x, z, heading, asPlayer) {
-      var mesh = SH.Vehicles.buildCarMesh(SH.Config.CAR_MODELS[modelIdx], color, false, false);
-      mesh.position.set(x, 0, z); mesh.rotation.y = heading; scene.add(mesh);
-      var car = { mesh: mesh, model: SH.Config.CAR_MODELS[modelIdx], x: x, z: z, heading: heading, speed: 0, steer: 0, damage: 0, isPlayer: false, color: color };
-      mesh.userData.car = car; SH.Vehicles.cars.push(car);
-      return car;
+// Solstice Heat — shots.js
+// Deterministic screenshot compositions. When the page is opened
+// with ?shot=<name>&seed=7 the game freezes live play and arranges
+// the player, cars, pedestrians, police, weather and camera into a
+// fixed scene so dossier screenshots are reproducible.
+(function () {
+  "use strict";
+  window.SH = window.SH || {};
+
+  var SHOTS = {
+    cover: {
+      name: "cover",
+      hour: 18.6,
+      weather: "clear",
+      player: { x: 2, z: 238, heading: Math.PI * 0.9, state: "foot" },
+      car: { x: 7, z: 233, heading: Math.PI * 0.55 },
+      camera: { dist: 11, height: 3.2, yawOffset: -2.4 },
+      peds: 6,
+      traffic: true,
+      stars: 0
+    },
+    drive: {
+      name: "drive",
+      hour: 20.4,
+      weather: "clear",
+      player: { x: 0, z: 128, heading: 0, state: "car" },
+      car: { x: 0, z: 128, heading: 0 },
+      camera: { dist: 10, height: 3.4, yawOffset: -0.4 },
+      peds: 3,
+      traffic: true,
+      stars: 0
+    },
+    chase: {
+      name: "chase",
+      hour: 16.2,
+      weather: "haze",
+      player: { x: -20, z: 60, heading: Math.PI / 2, state: "car" },
+      car: { x: -20, z: 60, heading: Math.PI / 2 },
+      camera: { dist: 13, height: 4.2, yawOffset: 0.7 },
+      peds: 2,
+      traffic: true,
+      stars: 3
+    },
+    foot: {
+      name: "foot",
+      hour: 19.2,
+      weather: "clear",
+      player: { x: 38, z: 330, heading: Math.PI, state: "foot" },
+      car: { x: 8, z: 250, heading: Math.PI * 0.4 },
+      camera: { dist: 8, height: 2.6, yawOffset: -0.6 },
+      peds: 8,
+      traffic: false,
+      stars: 0
+    },
+    marina: {
+      name: "marina",
+      hour: 7.4,
+      weather: "haze",
+      player: { x: 150, z: 150, heading: Math.PI * 1.2, state: "foot" },
+      car: { x: 146, z: 140, heading: Math.PI * 0.2 },
+      camera: { dist: 12, height: 3.6, yawOffset: 0.9 },
+      peds: 5,
+      traffic: true,
+      stars: 0
+    },
+    sunset: {
+      name: "sunset",
+      hour: 19.6,
+      weather: "clear",
+      player: { x: -60, z: 246, heading: Math.PI * 0.75, state: "foot" },
+      car: { x: -52, z: 242, heading: Math.PI * 0.3 },
+      camera: { dist: 14, height: 4.5, yawOffset: -0.9 },
+      peds: 4,
+      traffic: true,
+      stars: 0
     }
-    if (S.name === 'cover') {
-      W.setWeather('clear', 18.1);
-      var hero = placeCar(0, 0xe63946, 322, 42, -Math.PI / 2.4, true);
-      P.x = 316; P.z = 36; P.heading = 2.2; if (P.mesh) { P.mesh.position.set(P.x, 0, P.z); P.mesh.rotation.y = P.heading; }
-      game.camPos.set(306, 3.2, 26); game.camTarget.set(324, 1.2, 42);
-      if (SH.HUD) { SH.HUD.centerMsg('', 0); }
-      document.title = 'Solstice Heat';
-      var titleEl = document.getElementById('shottitle'); if (titleEl) { titleEl.style.display = 'block'; }
-    } else if (S.name === 'drive') {
-      W.setWeather('clear', 17.6);
-      var car2 = placeCar(1, 0x2ec4b6, -8, -60, 0, true);
-      P.enterCarSilent(car2);
-      SH.Economy.cash = 2450; SH.Economy.bank = 800; SH.Economy.xp = 350;
-      var job = { kind: 'courier', name: 'Courier Run', desc: 'Deliver', base: 80, fx: -8, fz: -40, tx: 168, tz: -168, dist: 300 };
-      SH.Jobs.start(job);
-      game.camPos.set(-16, 6.5, -84); game.camTarget.set(-8, 1.2, -50);
-    } else if (S.name === 'chase') {
-      W.setWeather('breeze', 18.6);
-      var car3 = placeCar(2, 0xff9f1c, -40, 168, Math.PI, true);
-      P.enterCarSilent(car3); car3.speed = 14;
-      SH.Police.setStars(3);
-      for (var i = 0; i < 2; i++) {
-        var u = SH.Vehicles.spawnPoliceCar(scene, -52 + i * 22, 196);
-        u.heading = Math.PI; SH.Police.units.push(u);
+  };
+
+  function requestedShot() {
+    var name = window.SH.queryParam("shot");
+    if (name && SHOTS[name]) {
+      return SHOTS[name];
+    }
+    return null;
+  }
+
+  function apply(shot, world) {
+    var player = world.player;
+    var vehicles = window.SH.vehicles;
+    var weather = window.SH.weather;
+
+    weather.setHour(shot.hour);
+    weather.setKind(shot.weather);
+
+    var car = vehicles.playerCar;
+    if (car && shot.car) {
+      car.pos.set(shot.car.x, 0, shot.car.z);
+      car.heading = shot.car.heading;
+      car.speed = shot.name === "drive" || shot.name === "chase" ? 18 : 0;
+      car.mesh.position.copy(car.pos);
+      car.mesh.rotation.y = car.heading;
+    }
+
+    player.pos.set(shot.player.x, 0, shot.player.z);
+    player.heading = shot.player.heading;
+    player.mesh.position.copy(player.pos);
+    player.mesh.rotation.y = player.heading;
+    if (shot.player.state === "car" && car) {
+      player.state = "car";
+      player.car = car;
+      car.driver = "player";
+      player.mesh.visible = false;
+      player.pos.copy(car.pos);
+    } else {
+      player.state = "foot";
+      player.mesh.visible = true;
+    }
+
+    // Cluster a few pedestrians near the player for life.
+    var people = window.SH.people.all;
+    var i;
+    for (i = 0; i < people.length && i < shot.peds; i++) {
+      var p = people[i];
+      var angle = (i / Math.max(1, shot.peds)) * Math.PI * 2;
+      p.pos.set(
+        shot.player.x + Math.sin(angle) * (5 + i),
+        0,
+        shot.player.z + Math.cos(angle) * (5 + i)
+      );
+      p.mesh.position.copy(p.pos);
+      p.state = "wait";
+      p.waitTimer = 999;
+    }
+
+    // Police pressure for the chase composition.
+    if (shot.stars > 0) {
+      var police = window.SH.police;
+      police.heat = 70;
+      police.stars = shot.stars;
+      var rng = new window.SH.RNG(99);
+      var scene = world.scene;
+      var made = 0;
+      while (made < 2) {
+        var cop = vehicles.createCar(scene, {
+          x: shot.player.x + (made === 0 ? -9 : 6),
+          z: shot.player.z + (made === 0 ? 10 : 14),
+          heading: shot.player.heading,
+          color: 0xf5f0e6,
+          isCop: true
+        });
+        cop.ai = { pursuit: true };
+        police.cars.push(cop);
+        made += 1;
       }
-      if (SH.HUD) SH.HUD.radioChatter('Dispatch: pursuit in progress on the Neon Mile.');
-      game.camPos.set(-58, 7, 138); game.camTarget.set(-40, 1.2, 172);
-    } else if (S.name === 'foot') {
-      W.setWeather('clear', 17.9);
-      P.x = 322; P.z = 6; P.heading = 0.6;
-      if (P.mesh) { P.mesh.position.set(P.x, 0, P.z); P.mesh.rotation.y = P.heading; }
-      SH.Missions.marker.visible = true; SH.Missions.marker.position.x = 330; SH.Missions.marker.position.z = 60;
-      game.camPos.set(310, 3.4, -12); game.camTarget.set(326, 1.4, 14);
-    } else if (S.name === 'race') {
-      W.setWeather('clear', 16.9);
-      var car4 = placeCar(2, 0x4361ee, 328, 22, Math.PI, true);
-      P.enterCarSilent(car4);
-      placeCar(2, 0xe63946, 320, 22, Math.PI); placeCar(0, 0xffd166, 336, 22, Math.PI); placeCar(1, 0x6bcb77, 344, 22, Math.PI);
-      if (SH.HUD) SH.HUD.centerMsg('Race: Boardwalk Sprint - 3... 2... 1...', 30);
-      game.camPos.set(310, 5.5, -6); game.camTarget.set(330, 1.2, 24);
-    } else if (S.name === 'night') {
-      W.setWeather('rain', 22.4);
-      var car5 = placeCar(2, 0xf72585, -40, 176, Math.PI, true);
-      P.enterCarSilent(car5);
-      SH.Police.setStars(4);
-      var heli = SH.Police.heli; if (heli) { heli.visible = true; heli.position.set(-40, 27, 190); }
-      game.camPos.set(-62, 8, 146); game.camTarget.set(-40, 1.4, 180);
+      if (shot.stars >= 3) {
+        var ahead = {
+          x: shot.player.x - Math.sin(shot.player.heading) * 34,
+          z: shot.player.z - Math.cos(shot.player.heading) * 34
+        };
+        // Roadblock barriers are visualised through police update in
+        // live play; for the still, place a barrier row via a cop car
+        // parked sideways instead.
+        var blocker = vehicles.createCar(scene, {
+          x: ahead.x,
+          z: ahead.z,
+          heading: shot.player.heading + Math.PI / 2,
+          color: 0xf5f0e6,
+          isCop: true
+        });
+        blocker.ai = { pursuit: false };
+        police.cars.push(blocker);
+      }
     }
-    game.shotMode = true;
+
+    return {
+      camera: shot.camera,
+      focus: player.focusPos(),
+      heading: shot.player.heading
+    };
+  }
+
+  function cameraFor(shot, baseHeading) {
+    var c = shot.camera;
+    return {
+      dist: c.dist,
+      height: c.height,
+      yaw: baseHeading + c.yawOffset
+    };
+  }
+
+  window.SH.shots = {
+    list: SHOTS,
+    requested: requestedShot,
+    apply: apply,
+    cameraFor: cameraFor
   };
-  S.tick = function () {
-    if (!S.name) return;
-    S.frames++;
-    if (S.frames > 90 && !window.__shotReady) window.__shotReady = true;
-  };
-})(window.SH);
+})();

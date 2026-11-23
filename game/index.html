@@ -3,99 +3,261 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Solstice Heat - a pastel beach-city sandbox</title>
+<title>Solstice Heat — Solstice Bay</title>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { width: 100%; height: 100%; overflow: hidden; background: #1b1035; font-family: 'Segoe UI', Verdana, sans-serif; color: #fff; }
-  #game { position: fixed; inset: 0; }
-  #game canvas { display: block; }
-  .panel { position: fixed; z-index: 10; pointer-events: none; }
-  #topbar { top: 10px; left: 12px; background: rgba(16,12,38,.72); border: 1px solid #ff2e88; border-radius: 12px; padding: 10px 14px; min-width: 240px; }
-  #cash { font-size: 26px; font-weight: 800; color: #7cff4d; }
-  #bank { font-size: 13px; color: #aee2ff; }
-  #rank { color: #ffe14d; font-weight: 700; font-size: 14px; margin-top: 2px; }
-  #xpwrap { background: #333; height: 8px; border-radius: 4px; margin-top: 5px; overflow: hidden; }
-  #xpbar { background: linear-gradient(90deg, #00e5ff, #ff2e88); height: 100%; width: 0%; }
-  #xptext { font-size: 11px; color: #ddd; }
-  #stars { top: 10px; right: 14px; font-size: 30px; color: #ffe14d; text-shadow: 0 0 8px #ff9f1c; letter-spacing: 3px; }
-  #clockbox { top: 52px; right: 14px; text-align: right; background: rgba(16,12,38,.6); padding: 6px 10px; border-radius: 9px; font-size: 14px; }
-  #healthwrap { bottom: 118px; left: 12px; width: 210px; background: rgba(16,12,38,.7); padding: 8px 10px; border-radius: 9px; }
-  #healthouter { background: #333; height: 12px; border-radius: 6px; overflow: hidden; }
-  #healthbar { background: #5ee08a; height: 100%; width: 100%; }
-  #speed { font-size: 15px; color: #aee2ff; margin-top: 3px; }
-  #ammo, #shells { font-size: 12px; color: #ffd7ec; }
-  #objectivebox { top: 108px; left: 12px; max-width: 360px; background: rgba(16,12,38,.72); border-left: 4px solid #ffe14d; border-radius: 8px; padding: 9px 12px; }
-  #objective { font-size: 15px; font-weight: 700; }
-  #objdist { color: #00e5ff; font-weight: 700; }
-  #objtimer { color: #ff9f1c; font-weight: 700; margin-left: 8px; }
-  #district { font-size: 12px; color: #ffd7ec; }
-  #minimapwrap { bottom: 12px; right: 12px; background: rgba(16,12,38,.75); padding: 6px; border-radius: 12px; border: 1px solid #00e5ff; }
-  #centermsg { top: 24%; left: 50%; transform: translateX(-50%); font-size: 30px; font-weight: 800; text-align: center; text-shadow: 0 2px 12px #000; opacity: 0; transition: opacity .3s; white-space: nowrap; }
-  #prompt { bottom: 150px; left: 50%; transform: translateX(-50%); background: rgba(16,12,38,.8); padding: 7px 16px; border-radius: 20px; font-size: 15px; opacity: 0; }
-  #tutorial { bottom: 196px; left: 50%; transform: translateX(-50%); background: rgba(255,225,77,.92); color: #222; padding: 7px 16px; border-radius: 20px; font-size: 15px; font-weight: 700; opacity: 0; }
-  #jobboard { top: 240px; left: 12px; width: 300px; background: rgba(16,12,38,.88); border: 1px solid #00e5ff; border-radius: 10px; padding: 10px 12px; font-size: 13px; display: none; }
-  #jobboard div { margin: 7px 0; }
-  #popup { top: 180px; right: 14px; text-align: right; }
-  .popup-item { background: rgba(20,60,30,.85); border-radius: 8px; padding: 5px 12px; margin-top: 5px; font-weight: 700; color: #b6ffb6; animation: pop 2.6s forwards; }
-  @keyframes pop { 0% { transform: translateX(30px); opacity: 0; } 12% { transform: none; opacity: 1; } 80% { opacity: 1; } 100% { opacity: 0; } }
-  #chatter { bottom: 220px; right: 12px; width: 300px; font-size: 12px; color: #ffb3c2; text-align: right; text-shadow: 0 1px 4px #000; }
-  #ticker { bottom: 0; left: 0; right: 0; background: rgba(10,8,26,.9); padding: 6px 12px; font-size: 13px; display: flex; gap: 12px; }
-  #station { color: #00e5ff; font-weight: 800; white-space: nowrap; }
-  #tickertext { color: #ffe9f4; white-space: nowrap; overflow: hidden; }
-  #muted { color: #ff9f1c; font-weight: 700; }
-  #dialog { bottom: 44px; left: 50%; transform: translateX(-50%); width: min(640px, 92vw); background: rgba(16,12,38,.92); border: 1px solid #ffe14d; border-radius: 12px; padding: 14px 18px; display: none; pointer-events: auto; cursor: pointer; z-index: 20; }
-  #dialogname { color: #ffe14d; font-weight: 800; }
-  #dialogtext { margin-top: 4px; font-size: 16px; }
-  #dialoghint { font-size: 11px; color: #aaa; margin-top: 6px; }
-  #bustwrap { top: 130px; right: 14px; width: 170px; }
-  #bustbar { background: #333; height: 12px; border-radius: 6px; overflow: hidden; opacity: 0; border: 1px solid #ff4455; }
-  #bustbar div { background: #ff4455; height: 100%; width: 0%; }
-  #bustlabel { font-size: 12px; color: #ff8896; text-align: right; }
-  .screen { position: fixed; inset: 0; z-index: 30; display: none; align-items: center; justify-content: center; flex-direction: column; background: radial-gradient(circle at 50% 35%, rgba(255,179,107,.35), rgba(16,10,40,.88)); text-align: center; padding: 20px; }
-  .screen h1 { font-size: 54px; letter-spacing: 2px; color: #ffe14d; text-shadow: 0 0 24px #ff2e88; }
-  .screen h2 { font-size: 40px; color: #ff5566; }
-  .screen p { max-width: 560px; margin: 12px 0; font-size: 16px; line-height: 1.5; }
-  .screen button { pointer-events: auto; background: #ff2e88; color: #fff; border: none; font-size: 19px; font-weight: 800; padding: 13px 34px; border-radius: 30px; cursor: pointer; margin-top: 10px; box-shadow: 0 4px 18px rgba(255,46,136,.5); }
-  .screen button:hover { background: #ff5aa2; }
-  .controls { font-size: 13px; color: #cfe8ff; line-height: 1.7; }
-  #shottitle { display: none; position: fixed; top: 38px; left: 0; right: 0; text-align: center; z-index: 15; pointer-events: none; }
-  #shottitle .big { font-size: 64px; font-weight: 900; color: #ffe14d; text-shadow: 0 0 30px #ff2e88, 0 3px 0 #b3005e; letter-spacing: 3px; }
-  #shottitle .sub { font-size: 20px; color: #fff; text-shadow: 0 2px 8px #000; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background: #0b1020;
+    font-family: "Segoe UI", Arial, sans-serif;
+    color: #f5f0e6;
+  }
+  #game-canvas {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+  }
+  .hud {
+    position: fixed;
+    z-index: 10;
+    pointer-events: none;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  }
+  #hud-top-left {
+    top: 14px;
+    left: 16px;
+  }
+  #hud-title {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    color: #ffd166;
+  }
+  #hud-district {
+    font-size: 13px;
+    letter-spacing: 1px;
+    opacity: 0.9;
+  }
+  #hud-clock {
+    font-size: 13px;
+    opacity: 0.85;
+  }
+  #hud-top-right {
+    top: 14px;
+    right: 16px;
+    text-align: right;
+  }
+  #hud-cash {
+    font-size: 20px;
+    font-weight: 700;
+    color: #8be26e;
+  }
+  #hud-bank {
+    font-size: 12px;
+    opacity: 0.85;
+  }
+  #hud-stars {
+    font-size: 20px;
+    color: #ffd166;
+    letter-spacing: 3px;
+    min-height: 24px;
+  }
+  #hud-rank {
+    font-size: 12px;
+    opacity: 0.9;
+  }
+  #hud-bottom-left {
+    left: 16px;
+    bottom: 16px;
+  }
+  .bar {
+    width: 220px;
+    height: 12px;
+    background: rgba(0, 0, 0, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    margin-top: 5px;
+  }
+  .bar-fill {
+    height: 100%;
+    width: 100%;
+  }
+  #health-fill { background: #e2452c; }
+  #armor-fill { background: #3f8fe0; }
+  #bust-fill { background: #ffd166; }
+  .bar-label {
+    font-size: 11px;
+    letter-spacing: 1px;
+    margin-top: 6px;
+  }
+  #hud-bottom-right {
+    right: 16px;
+    bottom: 16px;
+    text-align: right;
+  }
+  #minimap {
+    border: 2px solid rgba(255, 255, 255, 0.4);
+    background: rgba(8, 14, 28, 0.8);
+  }
+  #hud-speed {
+    font-size: 18px;
+    font-weight: 700;
+    margin-top: 6px;
+  }
+  #hud-ammo {
+    font-size: 13px;
+    opacity: 0.9;
+  }
+  #hud-center {
+    left: 50%;
+    top: 12%;
+    transform: translateX(-50%);
+    text-align: center;
+    width: 70%;
+  }
+  #mission-title {
+    font-size: 24px;
+    font-weight: 700;
+    color: #ffd166;
+    letter-spacing: 1px;
+  }
+  #mission-text {
+    font-size: 16px;
+    margin-top: 4px;
+  }
+  #mission-sub {
+    font-size: 13px;
+    opacity: 0.9;
+    margin-top: 2px;
+  }
+  #hud-prompt {
+    left: 50%;
+    bottom: 18%;
+    transform: translateX(-50%);
+    font-size: 16px;
+    background: rgba(0, 0, 0, 0.55);
+    padding: 8px 16px;
+    border-radius: 6px;
+    display: none;
+  }
+  #hud-toast {
+    left: 50%;
+    bottom: 26%;
+    transform: translateX(-50%);
+    font-size: 15px;
+    color: #ffd166;
+    display: none;
+  }
+  #hud-radio {
+    left: 16px;
+    bottom: 150px;
+    font-size: 13px;
+    opacity: 0.9;
+  }
+  #photo-frame {
+    position: fixed;
+    inset: 0;
+    z-index: 20;
+    pointer-events: none;
+    display: none;
+  }
+  .photo-bar {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 9vh;
+    background: #000;
+  }
+  #photo-bar-top { top: 0; }
+  #photo-bar-bottom { bottom: 0; }
+  #photo-label {
+    position: absolute;
+    right: 18px;
+    bottom: 11vh;
+    color: #fff;
+    font-size: 13px;
+    letter-spacing: 2px;
+  }
+  #overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    background: rgba(5, 8, 18, 0.82);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+  }
+  #overlay-box {
+    max-width: 560px;
+    padding: 28px;
+  }
+  #overlay-title {
+    font-size: 30px;
+    color: #ffd166;
+    letter-spacing: 2px;
+    margin-bottom: 10px;
+  }
+  #overlay-text {
+    font-size: 15px;
+    line-height: 1.5;
+  }
 </style>
 </head>
 <body>
-<div id="game"></div>
-<div id="shottitle"><div class="big">SOLSTICE HEAT</div><div class="sub">Solstice Bay is yours - a living pastel beach city</div></div>
+<canvas id="game-canvas"></canvas>
 
-<div class="panel" id="topbar">
-  <div id="cash">$120</div><div id="bank">Bank $0</div>
-  <div id="rank">Street Rat</div>
-  <div id="xpwrap"><div id="xpbar"></div></div><div id="xptext">0 XP</div>
+<div class="hud" id="hud-top-left">
+  <div id="hud-title">SOLSTICE HEAT</div>
+  <div id="hud-district">Boardwalk</div>
+  <div id="hud-clock">12:00 · Clear</div>
 </div>
-<div class="panel" id="stars">&#9734;&#9734;&#9734;&#9734;&#9734;</div>
-<div class="panel" id="clockbox"><span id="clock">17:24</span> - <span id="weather">clear</span><div id="district">Boardwalk</div></div>
-<div class="panel" id="bustwrap"><div id="bustlabel">BUSTED METER</div><div id="bustbar"><div></div></div></div>
-<div class="panel" id="objectivebox"><span id="objective">Welcome to Solstice Bay</span><br><span id="objdist"></span><span id="objtimer"></span></div>
-<div class="panel" id="healthwrap"><div id="healthouter"><div id="healthbar"></div></div><div id="speed"></div><div id="ammo"></div><div id="shells">Shells 0/30</div></div>
-<div class="panel" id="jobboard"></div>
-<div class="panel" id="popup"></div>
-<div class="panel" id="chatter"></div>
-<div class="panel" id="centermsg"></div>
-<div class="panel" id="prompt"></div>
-<div class="panel" id="tutorial"></div>
-<div class="panel" id="minimapwrap"><canvas id="minimap" width="252" height="190"></canvas></div>
-<div class="panel" id="dialog"><div id="dialogname">Marisol Vega</div><div id="dialogtext"></div><div id="dialoghint">Click to continue</div></div>
-<div class="panel" id="ticker"><span id="station">SOLSTICE FM</span><span id="tickertext">Welcome to Solstice Bay radio.</span><span id="muted"></span></div>
 
-<div class="screen" id="startscreen">
-  <h1>SOLSTICE HEAT</h1>
-  <p>A living pastel beach city: dynamic weather, a full day and night cycle, street races, stunt jumps, hidden shells, side jobs and a ten-mission story for fixer Marisol Vega. Steal any car, outrun the SBPD, chase the golden hour.</p>
-  <button id="startbtn">START ENGINE</button>
-  <p class="controls">WASD drive / walk - Shift run - E enter car / interact - F melee - Click pistol<br>Space handbrake - B race at the race office - X cancel job - R radio - M mute - Esc pause</p>
+<div class="hud" id="hud-top-right">
+  <div id="hud-stars"></div>
+  <div id="hud-cash">$0</div>
+  <div id="hud-bank">Bank $0</div>
+  <div id="hud-rank">Rank 1 · Runner · 0 XP</div>
 </div>
-<div class="screen" id="pausescreen"><h1>PAUSED</h1><p>The bay waits for no one. Well, just this once.</p><button id="resumebtn">RESUME</button></div>
-<div class="screen" id="bustedscreen"><h2>BUSTED</h2><p>The SBPD got you. Bail and fines cost $150. The bay forgives, the record does not.</p><button id="bustedbtn">WALK OUT OF THE STATION</button></div>
-<div class="screen" id="wastedscreen"><h2>WASTED</h2><p>You wake up outside Solstice General, sun still shining, shirt still loud.</p><button id="wastedbtn">GET UP</button></div>
+
+<div class="hud" id="hud-center">
+  <div id="mission-title"></div>
+  <div id="mission-text"></div>
+  <div id="mission-sub"></div>
+</div>
+
+<div class="hud" id="hud-bottom-left">
+  <div class="bar-label">HEALTH</div>
+  <div class="bar"><div class="bar-fill" id="health-fill"></div></div>
+  <div class="bar-label">ARMOR</div>
+  <div class="bar"><div class="bar-fill" id="armor-fill"></div></div>
+  <div class="bar-label">BUST</div>
+  <div class="bar"><div class="bar-fill" id="bust-fill"></div></div>
+</div>
+
+<div class="hud" id="hud-radio"></div>
+
+<div class="hud" id="hud-bottom-right">
+  <canvas id="minimap" width="252" height="190"></canvas>
+  <div id="hud-speed"></div>
+  <div id="hud-ammo"></div>
+</div>
+
+<div class="hud" id="hud-prompt"></div>
+<div class="hud" id="hud-toast"></div>
+
+<div id="photo-frame">
+  <div class="photo-bar" id="photo-bar-top"></div>
+  <div class="photo-bar" id="photo-bar-bottom"></div>
+  <div id="photo-label">PHOTO MODE · P TO EXIT</div>
+</div>
+
+<div id="overlay">
+  <div id="overlay-box">
+    <div id="overlay-title">SOLSTICE HEAT</div>
+    <div id="overlay-text">Welcome to Solstice Bay.</div>
+  </div>
+</div>
 
 <script src="vendor/three.min.js"></script>
 <script src="src/config.js"></script>
